@@ -44,6 +44,94 @@
       "text": "铅笔已被证明是一种极具韧性和价值的工具，其用途一直延续到我们的高科技时代，正如一个众所周知的故事所表明的那样。有时人们说，美国太空计划花费了数百万美元发明了一种能在太空零重力环境下书写的笔。相比之下，俄罗斯人只是给他们的宇航员配备了从未让他们失望的老式铅笔。不过应该指出的是，关于美国人忽略了铅笔在零重力环境下的实际优势的流行传说仅仅是虚构的。实际上，美国和俄罗斯宇航员在各自国家的首次太空飞行中都配备了铅笔。一家私人公司后来开发了能在零重力环境下书写的笔。事实上，现在各国的宇航员都使用笔。但这无关紧要——铅笔在世界上每一间教室、每一个规划室、建筑绘图室和每一间艺术工作室中仍在使用。而且没有任何迹象表明我们有可能发明出比石墨更好的铅笔芯材料。"
     }
   ],
-  "questionExplanations": []
+  "questionExplanations": [
+    {
+      "sectionTitle": "1. 笔记填空（Questions 1-6）",
+      "mode": "group",
+      "items": [
+        {
+          "questionNumber": 1,
+          "text": "(1) 题目 1：Graphite was first found below a ____ blown down in a storm.（石墨最早是在暴风雨中被吹倒的____下面发现的。）\n答案：tree\n解析：第一段提到当地人在一棵被连根拔起的大树下发现了未知的黑色物质，对应“below a large uprooted tree”。题目限制 ONE WORD ONLY，所以填 tree。",
+          "questionId": "q1"
+        },
+        {
+          "questionNumber": 2,
+          "text": "(2) 题目 2：The first use of graphite was to make marks on ____.（石墨最早的用途是在____身上做标记。）\n答案：sheep\n解析：第二段说当地农民最初把这种新发现的材料用作识别羊的便捷方法，即“identify their sheep”。",
+          "questionId": "q2"
+        },
+        {
+          "questionNumber": 3,
+          "text": "(3) 题目 3：dirty to use because it is so ____.（使用起来很脏，因为它太____。）\n答案：soft\n解析：第二段说明未经处理时这种材料“very soft”，因此“messy to handle”。",
+          "questionId": "q3"
+        },
+        {
+          "questionNumber": 4,
+          "text": "(4) 题目 4：originally wrapped in ____ or animal skin to make it useable as a pencil.（最初用____或动物皮包裹，使它可作为铅笔使用。）\n答案：rope\n解析：第二段原文是“people enclosed a thin core ... in stiff sheep hides or rope”。题干已经把 sheep hides 改写为 animal skin，所以空格对应 rope。",
+          "questionId": "q4"
+        },
+        {
+          "questionNumber": 5,
+          "text": "(5) 题目 5：The government completely took over the ____ at Borrowdale.（政府完全接管了 Borrowdale 的____。）\n答案：mines\n解析：第三段提到政府意识到 Borrowdale 石墨的商业潜力，并“assumed control of all the mines there”。",
+          "questionId": "q5"
+        },
+        {
+          "questionNumber": 6,
+          "text": "(6) 题目 6：Local people began to ____ graphite for the money involved.（当地人为了钱开始____石墨。）\n答案：steal\n解析：第三段说石墨非常珍贵，当地人开始“steal it”。",
+          "questionId": "q6"
+        }
+      ],
+      "questionRange": {
+        "start": 1,
+        "end": 6
+      },
+      "text": "答案：tree / sheep / soft / rope / mines / steal\n解析：Questions 1-6 都来自前三段，按原文顺序定位。注意第 4 题题干中的 animal skin 对应原文 stiff sheep hides，因此空格填另一个并列词 rope。"
+    },
+    {
+      "sectionTitle": "2. 判断题（Questions 7-13）",
+      "mode": "per_question",
+      "items": [
+        {
+          "questionNumber": 7,
+          "text": "(1) 题目 7：The Italians were the first to make pencils out of wood.（意大利人最早制作木质铅笔。）\n答案：TRUE\n解析：第四段明确说“The Italians originally invented the wooden casing”，即意大利人最初发明了木质外壳。",
+          "questionId": "q7"
+        },
+        {
+          "questionNumber": 8,
+          "text": "(2) 题目 8：The Germans used different types of wood to produce pencils.（德国人用不同种类的木材生产铅笔。）\n答案：NOT GIVEN\n解析：第四段只说德国人把这项技术进一步发展，并将大规模生产技术应用于铅笔制造；没有说明德国人是否使用不同种类的木材。",
+          "questionId": "q8"
+        },
+        {
+          "questionNumber": 9,
+          "text": "(3) 题目 9：More clay in a pencil makes it write more darkly.（铅笔中黏土越多，写出来越黑。）\n答案：FALSE\n解析：第四段说更多黏土会让铅笔更硬、更尖、痕迹更精确；更多石墨才会让笔迹更软、更粗、更黑。题目把 clay 和 darker 对应错了。",
+          "questionId": "q9"
+        },
+        {
+          "questionNumber": 10,
+          "text": "(4) 题目 10：After the HB code was introduced, it very quickly became used by all manufacturers.（HB 编码推出后，很快被所有制造商使用。）\n答案：NOT GIVEN\n解析：第五段说世界各地铅笔制造商至今仍使用 HB 等级系统，但没有提到它被采用的速度，也没有说“very quickly”。",
+          "questionId": "q10"
+        },
+        {
+          "questionNumber": 11,
+          "text": "(5) 题目 11：English pencil factories have now all closed down.（英国铅笔工厂现在都关闭了。）\n答案：FALSE\n解析：第六段明确说英国铅笔产业仍在 Keswick 附近继续蓬勃发展，即“continues to thrive”。",
+          "questionId": "q11"
+        },
+        {
+          "questionNumber": 12,
+          "text": "(6) 题目 12：American astronauts used pencils on their early journeys into space.（美国宇航员早期进入太空时使用过铅笔。）\n答案：TRUE\n解析：第七段说美国和俄罗斯宇航员在各自国家的首次太空飞行中都配备了铅笔。",
+          "questionId": "q12"
+        },
+        {
+          "questionNumber": 13,
+          "text": "(7) 题目 13：The use of graphite pencils is unlikely to continue into the future.（石墨铅笔未来不太可能继续使用。）\n答案：FALSE\n解析：第七段结尾说铅笔仍在各类场景中使用，并且没有迹象表明我们会发明出比石墨更好的铅笔芯材料。题目意思与原文相反。",
+          "questionId": "q13"
+        }
+      ],
+      "questionRange": {
+        "start": 7,
+        "end": 13
+      },
+      "text": "答案：TRUE / NOT GIVEN / FALSE / NOT GIVEN / FALSE / TRUE / FALSE\n解析：Questions 7-13 主要集中在第四至第七段。判断题要区分“相反”为 FALSE 和“原文未提”为 NOT GIVEN。"
+    }
+  ]
   });
 })(typeof window !== "undefined" ? window : globalThis);

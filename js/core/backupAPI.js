@@ -267,10 +267,14 @@
         const restoreStorageVersion = options.restoreStorageVersion !== false;
 
         if (restoreRecords && records != null) {
+            if (Array.isArray(records) && records.length === 0 && options.allowEmptyRestore !== true) {
+                throw new Error('BackupAPI.restore: 备份中没有练习记录，已拒绝空恢复');
+            }
             if (global.PracticeRecordAPI && typeof global.PracticeRecordAPI.restoreRecords === 'function') {
                 await global.PracticeRecordAPI.restoreRecords(records, {
                     stats: isPlainObject(stats) ? stats : null,
-                    updateStats: true
+                    updateStats: true,
+                    allowEmptyRestore: options.allowEmptyRestore === true
                 });
             } else {
                 throw new Error('BackupAPI.restore: PracticeRecordAPI.restoreRecords not ready');

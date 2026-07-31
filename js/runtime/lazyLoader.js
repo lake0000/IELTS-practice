@@ -6,6 +6,8 @@
     var groupStatus = Object.create(null);
     var dependencies = Object.create(null);
     var providedScripts = new Set();
+    var ASSET_VERSION = '20260730-replay-detail-wrongreason';
+    global.APP_ASSET_VERSION = ASSET_VERSION;
     var READING_EXAM_MANIFEST_SCRIPT = 'assets/generated/reading-exams/manifest.js';
     var LISTENING_EXAM_MANIFEST_SCRIPT = 'assets/generated/listening-exams/manifest.js';
     var LISTENING_EXAM_INDEX_SCRIPT = 'assets/generated/listening-exams/listening-index.compat.js';
@@ -80,11 +82,45 @@
         }
     }
 
+    function versionScriptUrl(url) {
+        if (!url || !ASSET_VERSION) {
+            return url;
+        }
+        var text = String(url);
+        if (!/\.js(\?|#|$)/i.test(text)) {
+            return url;
+        }
+        if (/^(https?:)?\/\//i.test(text) && !text.startsWith(global.location.origin)) {
+            return url;
+        }
+        try {
+            var parsed = new URL(text, document.baseURI);
+            parsed.searchParams.set('v', ASSET_VERSION);
+            return parsed.href;
+        } catch (_) {
+            var separator = text.indexOf('?') === -1 ? '?' : '&';
+            return text + separator + 'v=' + encodeURIComponent(ASSET_VERSION);
+        }
+    }
+
+    function stripVersionParam(url) {
+        if (!url) {
+            return '';
+        }
+        try {
+            var parsed = new URL(url, document.baseURI);
+            parsed.searchParams.delete('v');
+            return parsed.href;
+        } catch (_) {
+            return String(url).replace(/([?&])v=[^&#]*&?/g, '$1').replace(/[?&]$/, '');
+        }
+    }
+
     function findExistingScriptTag(url) {
         if (typeof document === 'undefined') {
             return null;
         }
-        var target = normalizeScriptUrl(url);
+        var target = stripVersionParam(normalizeScriptUrl(url));
         if (!target) {
             return null;
         }
@@ -95,7 +131,7 @@
             if (!srcAttr) {
                 continue;
             }
-            if (normalizeScriptUrl(srcAttr) === target || normalizeScriptUrl(node.src) === target) {
+            if (stripVersionParam(normalizeScriptUrl(srcAttr)) === target || stripVersionParam(normalizeScriptUrl(node.src)) === target) {
                 return node;
             }
         }
@@ -147,7 +183,7 @@
 
         scriptStatus[url] = new Promise(function inject(resolve, reject) {
             var script = document.createElement('script');
-            script.src = url;
+            script.src = versionScriptUrl(url);
             script.async = true;
             script.onload = function handleLoad() {
                 scriptStatus[url] = 'loaded';

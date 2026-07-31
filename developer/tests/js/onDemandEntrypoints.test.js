@@ -37,6 +37,9 @@ function createDocumentStub(inputState, buttonState) {
             }
             return null;
         },
+        querySelectorAll() {
+            return [];
+        },
         getElementById(id) {
             if (id === 'exam-search-input') {
                 return inputState;
@@ -69,9 +72,16 @@ function createHarness() {
             messages.push({ message, type });
         },
         getExamIndexState() {
-            return [
+            return windowStub.__examIndex || [
                 { id: 'reading-1', title: 'Ocean Passage', type: 'reading', hasHtml: true, path: 'Reading/set-1' }
             ];
+        },
+        getPracticeRecordsState() {
+            return windowStub.__practiceRecords || [];
+        },
+        ensurePracticeRecordsSync() {
+            windowStub.__practiceSyncCalled = true;
+            return Promise.resolve(true);
         },
         AppLazyLoader: {
             ensureGroup(name) {
@@ -118,14 +128,36 @@ async function testRandomPracticeEnsuresBrowseRuntime(harness) {
     loadScript('js/app/main-entry.js', harness.context);
     loadScript('js/presentation/app-actions.js', harness.context);
 
-    harness.windowStub.AppActions.startRandomPractice('all', 'reading');
-    await Promise.resolve();
+    await harness.windowStub.AppActions.startRandomPractice('all', 'reading');
     await Promise.resolve();
 
     assert(harness.ensureCalls.includes('browse-runtime'), '随机练习应主动确保 browse-runtime 已加载');
     assert.strictEqual(harness.windowStub.__openedExamId, 'reading-1', '随机练习应在严格按需模式下仍能打开题目');
     recordResult('严格按需模式随机练习可启动', true, {
         ensureCalls: harness.ensureCalls,
+        openedExamId: harness.windowStub.__openedExamId
+    });
+}
+
+async function testRandomPracticeSkipsCompletedExam(harness) {
+    harness.windowStub.__examIndex = [
+        { id: 'reading-1', title: 'Ocean Passage', type: 'reading', hasHtml: true, path: 'Reading/set-1' },
+        { id: 'reading-2', title: 'Herbal Medicines', type: 'reading', hasHtml: true, path: 'Reading/set-2' }
+    ];
+    harness.windowStub.__practiceRecords = [
+        { id: 'record-1', examId: 'reading-1', title: 'Ocean Passage' }
+    ];
+
+    loadScript('js/app/main-entry.js', harness.context);
+    loadScript('js/presentation/app-actions.js', harness.context);
+
+    const selected = await harness.windowStub.AppActions.startRandomPractice('all', 'reading');
+    await Promise.resolve();
+
+    assert.strictEqual(harness.windowStub.__practiceSyncCalled, true, '随机练习前应先同步练习记录');
+    assert.strictEqual(selected.id, 'reading-2', '随机练习应排除已做过的题目');
+    assert.strictEqual(harness.windowStub.__openedExamId, 'reading-2', '随机练习应打开未练题');
+    recordResult('随机练习会排除已练题目', true, {
         openedExamId: harness.windowStub.__openedExamId
     });
 }
@@ -151,6 +183,7 @@ async function testClearSearchProxyLoadsBrowseRuntime(harness) {
 async function main() {
     try {
         await testRandomPracticeEnsuresBrowseRuntime(createHarness());
+        await testRandomPracticeSkipsCompletedExam(createHarness());
         await testClearSearchProxyLoadsBrowseRuntime(createHarness());
         console.log(JSON.stringify({
             status: 'pass',

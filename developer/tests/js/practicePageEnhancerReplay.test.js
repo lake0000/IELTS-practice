@@ -327,12 +327,230 @@ async function testUnifiedReadingReplayCanonicalMapWins() {
     });
 }
 
+async function testPracticeEnhancerReplayUsesAnswerDetailsSnapshotAndWrongReasons() {
+    const enhancer = loadEnhancer();
+    const replayResults = enhancer.buildReplayResultsFromEntry({
+        answers: [
+            { questionId: 'q9', answer: 'A' },
+            { questionId: 'q10', answer: 'C' },
+            { questionId: 'q11', answer: 'C, D, G' }
+        ],
+        correctAnswerMap: { q9: 'A', q10: 'C', q11: 'C, E, G' },
+        answerComparison: {
+            q9: { userAnswer: 'A, C', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'A, C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        answerDetails: {
+            q9: { userAnswer: 'A', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        wrongReasons: {
+            q11: { category: '题干理解错误', note: 'They are very tiring to put on.' }
+        },
+        scoreInfo: { correct: 7, total: 13, totalQuestions: 13, accuracy: 7 / 13, percentage: 54, preserveHistoricalScore: true }
+    });
+
+    assert.strictEqual(replayResults.answerComparison.q9.userAnswer, 'A');
+    assert.strictEqual(replayResults.answerComparison.q9.isCorrect, true);
+    assert.strictEqual(replayResults.answerComparison.q10.userAnswer, 'C');
+    assert.strictEqual(replayResults.answerComparison.q10.isCorrect, true);
+    assert.strictEqual(replayResults.answerComparison.q11.isCorrect, false);
+    assert.deepStrictEqual(replayResults.answerComparison.q11.wrongReason, {
+        category: '题干理解错误',
+        note: 'They are very tiring to put on.'
+    });
+    assert.strictEqual(replayResults.scoreInfo.correct, 7, '历史正确题数不能被复盘重算覆盖');
+    assert.strictEqual(replayResults.scoreInfo.totalQuestions, 13, '历史总题数不能被复盘重算覆盖');
+    recordResult('practice enhancer replay uses answerDetails snapshot and wrongReasons', true, {
+        q9: replayResults.answerComparison.q9,
+        q10: replayResults.answerComparison.q10,
+        q11: replayResults.answerComparison.q11,
+        scoreInfo: replayResults.scoreInfo
+    });
+}
+
+async function testUnifiedReadingReplayUsesAnswerDetailsSnapshotAndWrongReasons() {
+    const windowStub = {
+        __IELTS_READING_PAGE_TEST_HOOKS__: true,
+        location: { search: '?examId=p1-medium-57&dataKey=p1-medium-57', href: 'file:///repo/ReadingPractice/reading.html?examId=p1-medium-57' },
+        opener: null,
+        parent: null,
+        CSS: { escape(value) { return String(value); } },
+        addEventListener() {},
+        removeEventListener() {},
+        localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+        AnswerMatchCore: {
+            compareAnswers(userAnswer, correctAnswer) {
+                return String(userAnswer == null ? '' : userAnswer).trim().toLowerCase()
+                    === String(correctAnswer == null ? '' : correctAnswer).trim().toLowerCase();
+            }
+        }
+    };
+    windowStub.parent = windowStub;
+    const sandbox = {
+        window: windowStub,
+        globalThis: windowStub,
+        document: createDocumentStub(),
+        console: { log() {}, info() {}, warn() {}, error() {} },
+        URLSearchParams,
+        Date,
+        Math,
+        String,
+        Number,
+        Object,
+        Array,
+        Boolean,
+        Set,
+        Map,
+        Promise,
+        setTimeout() { return 1; },
+        clearTimeout() {},
+        HTMLElement: function HTMLElement() {},
+        HTMLInputElement: function HTMLInputElement() {},
+        HTMLTextAreaElement: function HTMLTextAreaElement() {},
+        HTMLSelectElement: function HTMLSelectElement() {}
+    };
+    const context = vm.createContext(sandbox);
+    runScript('js/core/practiceCore.js', context);
+    runScript('js/runtime/unifiedReadingPage.js', context);
+
+    const replayResults = windowStub.__IELTS_UNIFIED_READING_PAGE_TEST__.buildReplayResults({
+        answers: [
+            { questionId: 'q9', answer: 'A' },
+            { questionId: 'q10', answer: 'C' },
+            { questionId: 'q11', answer: 'C, D, G' }
+        ],
+        correctAnswerMap: { q9: 'A', q10: 'C', q11: 'C, E, G' },
+        answerComparison: {
+            q9: { userAnswer: 'A, C', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'A, C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        answerDetails: {
+            q9: { userAnswer: 'A', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        wrongReasons: {
+            q11: { category: '题干理解错误', note: 'They are very tiring to put on.' }
+        },
+        scoreInfo: { correct: 7, total: 13, totalQuestions: 13, accuracy: 7 / 13, percentage: 54, preserveHistoricalScore: true }
+    });
+
+    assert.strictEqual(replayResults.answerComparison.q9.userAnswer, 'A');
+    assert.strictEqual(replayResults.answerComparison.q9.isCorrect, true);
+    assert.strictEqual(replayResults.answerComparison.q10.userAnswer, 'C');
+    assert.strictEqual(replayResults.answerComparison.q10.isCorrect, true);
+    assert.strictEqual(replayResults.answerComparison.q11.isCorrect, false);
+    assert.deepStrictEqual(replayResults.answerComparison.q11.wrongReason, {
+        category: '题干理解错误',
+        note: 'They are very tiring to put on.'
+    });
+    assert.strictEqual(replayResults.scoreInfo.correct, 7, '统一阅读页历史正确题数不能被复盘重算覆盖');
+    assert.strictEqual(replayResults.scoreInfo.totalQuestions, 13, '统一阅读页历史总题数不能被复盘重算覆盖');
+    recordResult('unified reading replay uses answerDetails snapshot and wrongReasons', true, {
+        q9: replayResults.answerComparison.q9,
+        q10: replayResults.answerComparison.q10,
+        q11: replayResults.answerComparison.q11,
+        scoreInfo: replayResults.scoreInfo
+    });
+}
+
+async function testUnifiedReadingReplayFiltersSuiteAggregateByCurrentExam() {
+    const windowStub = {
+        __IELTS_READING_PAGE_TEST_HOOKS__: true,
+        location: {
+            search: '?examId=p1-low-02&dataKey=p1-low-02',
+            href: 'file:///repo/assets/generated/reading-exams/reading-practice-unified.html?examId=p1-low-02&dataKey=p1-low-02'
+        },
+        opener: null,
+        parent: null,
+        CSS: { escape(value) { return String(value); } },
+        addEventListener() {},
+        removeEventListener() {},
+        localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+        AnswerMatchCore: {
+            compareAnswers(userAnswer, correctAnswer) {
+                return String(userAnswer == null ? '' : userAnswer).trim().toLowerCase()
+                    === String(correctAnswer == null ? '' : correctAnswer).trim().toLowerCase();
+            }
+        }
+    };
+    windowStub.parent = windowStub;
+    const documentStub = createDocumentStub();
+
+    const sandbox = {
+        window: windowStub,
+        globalThis: windowStub,
+        document: documentStub,
+        console: { log() {}, info() {}, warn() {}, error() {} },
+        URLSearchParams,
+        Date,
+        Math,
+        String,
+        Number,
+        Object,
+        Array,
+        Boolean,
+        Set,
+        Map,
+        Promise,
+        setTimeout() { return 1; },
+        clearTimeout() {},
+        HTMLElement: function HTMLElement() {},
+        HTMLInputElement: function HTMLInputElement() {},
+        HTMLTextAreaElement: function HTMLTextAreaElement() {},
+        HTMLSelectElement: function HTMLSelectElement() {}
+    };
+    const context = vm.createContext(sandbox);
+    runScript('js/core/practiceCore.js', context);
+    runScript('js/runtime/unifiedReadingPage.js', context);
+
+    const hooks = windowStub.__IELTS_UNIFIED_READING_PAGE_TEST__;
+    const replayResults = hooks.buildReplayResults({
+        examId: 'suite-suite_ms4xfk3v_eed80a',
+        answers: {
+            'p1-low-02::q10': 'FALSE',
+            'p1-low-02::q12': 'NOT GIVEN',
+            'p2-medium-121::q10': 'A',
+            'p2-medium-121::q12': 'B'
+        },
+        correctAnswerMap: {
+            'p1-low-02::q10': 'FALSE',
+            'p1-low-02::q12': 'TRUE',
+            'p2-medium-121::q10': 'B',
+            'p2-medium-121::q12': 'B'
+        },
+        answerComparison: {
+            'p1-low-02::q10': { userAnswer: 'FALSE', correctAnswer: 'FALSE', isCorrect: true },
+            'p1-low-02::q12': { userAnswer: 'NOT GIVEN', correctAnswer: 'TRUE', isCorrect: false },
+            'p2-medium-121::q10': { userAnswer: 'A', correctAnswer: 'B', isCorrect: false },
+            'p2-medium-121::q12': { userAnswer: 'B', correctAnswer: 'B', isCorrect: true }
+        },
+        allQuestionIds: ['p1-low-02::q10', 'p1-low-02::q12', 'p2-medium-121::q10', 'p2-medium-121::q12']
+    });
+
+    assert.deepStrictEqual(Object.keys(replayResults.answerComparison).sort(), ['q10', 'q12']);
+    assert.strictEqual(replayResults.answerComparison.q10.isCorrect, true, '当前 P1 的 Q10 正确时不能显示错因控件');
+    assert.strictEqual(replayResults.answerComparison.q12.isCorrect, false, '当前 P1 的 Q12 错误时必须显示错因控件');
+    assert.strictEqual(replayResults.answerComparison.q12.userAnswer, 'NOT GIVEN');
+    assert.strictEqual(replayResults.answerComparison.q12.correctAnswer, 'TRUE');
+    recordResult('unified reading replay filters suite aggregate by current exam', true, {
+        keys: Object.keys(replayResults.answerComparison)
+    });
+}
+
 async function runAllTests() {
     const tests = [
         testPracticeEnhancerReplayCanonicalMapWins,
         testPracticeEnhancerReplayIgnoresNumericCorrectAnswersAsMap,
+        testPracticeEnhancerReplayUsesAnswerDetailsSnapshotAndWrongReasons,
         testPracticeEnhancerSubmissionPayloadCarriesCorrectAnswerMap,
         testUnifiedReadingReplayCanonicalMapWins,
+        testUnifiedReadingReplayUsesAnswerDetailsSnapshotAndWrongReasons,
+        testUnifiedReadingReplayFiltersSuiteAggregateByCurrentExam,
         testUnifiedReadingReplayRefusesComparisonCorrectAnswerFallback
     ];
     for (const testFn of tests) {

@@ -206,6 +206,13 @@ class PracticeHistoryEnhancer {
                                         <p>易读的文档格式，包含详细的答题表格</p>
                                     </div>
                                 </label>
+                                <label class="format-option">
+                                    <input type="radio" name="export-format" value="csv">
+                                    <div class="option-content">
+                                        <strong>CSV 表格</strong>
+                                        <p>一题一行，适合用 Excel 筛选错因和复盘</p>
+                                    </div>
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -234,6 +241,8 @@ class PracticeHistoryEnhancer {
 
             if (selectedFormat === 'markdown') {
                 await this.exportAsMarkdown();
+            } else if (selectedFormat === 'csv') {
+                await this.exportAsCsv();
             } else {
                 await this.exportAsJSON();
             }
@@ -258,6 +267,20 @@ class PracticeHistoryEnhancer {
         await exporter.exportToMarkdown();
         
         window.showMessage('Markdown 格式导出成功', 'success');
+    }
+
+    /**
+     * 导出为 CSV 表格
+     */
+    async exportAsCsv() {
+        if (!window.MarkdownExporter) {
+            throw new Error('MarkdownExporter 未加载');
+        }
+
+        const exporter = new MarkdownExporter();
+        await exporter.exportToCsv();
+
+        window.showMessage('CSV 表格导出成功', 'success');
     }
 
     /**

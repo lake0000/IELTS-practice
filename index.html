@@ -9,10 +9,10 @@
             type="image/svg+xml"
             href="assets/images/favicon.svg"
         />
-        <link rel="stylesheet" href="css/main.css" />
-        <link rel="stylesheet" href="css/heroui-bridge.css" />
-        <link rel="stylesheet" href="css/theme-switcher-scroll.css" />
-        <link rel="stylesheet" href="css/onboarding.css" />
+    <link rel="stylesheet" href="css/main.css?v=20260730-replay-detail-wrongreason" />
+    <link rel="stylesheet" href="css/heroui-bridge.css?v=20260730-replay-detail-wrongreason" />
+    <link rel="stylesheet" href="css/theme-switcher-scroll.css?v=20260730-replay-detail-wrongreason" />
+    <link rel="stylesheet" href="css/onboarding.css?v=20260730-replay-detail-wrongreason" />
     </head>
 
     <body class="hero-body boot-active" data-theme="heroui">
@@ -365,8 +365,8 @@
                             <div class="hero-card__meta">近期待练表现</div>
                         </div>
                         <div class="hero-card hero-card--stat">
-                            <div class="hero-card__label">学习时长(分钟)</div>
-                            <div class="hero-card__value" id="study-time">0</div>
+                            <div class="hero-card__label">学习时长</div>
+                            <div class="hero-card__value hero-card__value--duration" id="study-time">0</div>
                             <div class="hero-card__meta">聚焦沉浸时长</div>
                         </div>
                         <div class="hero-card hero-card--stat">
@@ -724,6 +724,12 @@
                                 📄 导出Markdown
                             </button>
                             <button
+                                class="btn btn-secondary"
+                                data-index-action="export-practice-csv"
+                            >
+                                📊 导出表格CSV
+                            </button>
+                            <button
                                 class="btn btn-info"
                                 data-index-action="toggle-bulk-delete"
                                 id="bulk-delete-btn"
@@ -755,6 +761,13 @@
                             >
                                 🗑️ 清除记录
                             </button>
+                        </div>
+                    </div>
+                    <div id="wrong-reason-review" class="wrong-reason-review" aria-live="polite">
+                        <div class="wrong-reason-review__title">错因复盘</div>
+                        <div id="wrong-reason-review-summary" class="wrong-reason-review__summary">错因 0 / 错题 0</div>
+                        <div id="wrong-reason-review-tags" class="wrong-reason-review__tags">
+                            <span class="wrong-reason-chip">待标 0</span>
                         </div>
                     </div>
                     <div id="history-list" class="practice-history-list">
@@ -1356,16 +1369,16 @@
 
         <!-- 启动与懒加载工具 -->
         <script src="assets/vendor/three.min.js"></script>
-        <script src="js/bundles/runtime-entry.bundle.js"></script>
+    <script src="js/bundles/runtime-entry.bundle.js?v=20260730-replay-detail-wrongreason"></script>
 
         <!-- 基础环境与日志 -->
-        <script src="js/bundles/core-foundation.bundle.js"></script>
+    <script src="js/bundles/core-foundation.bundle.js?v=20260730-replay-detail-wrongreason"></script>
 
         <!-- 工具库与基础视图 -->
-        <script src="js/bundles/ui-shell.bundle.js"></script>
+    <script src="js/bundles/ui-shell.bundle.js?v=20260730-replay-detail-wrongreason"></script>
 
         <!-- 入口与懒加载代理 -->
-        <script src="js/bundles/legacy-app.bundle.js"></script>
+    <script src="js/bundles/legacy-app.bundle.js?v=20260730-replay-detail-wrongreason"></script>
 
         <!-- 成就系统模态框 -->
         <div id="achievements-modal" class="theme-modal">

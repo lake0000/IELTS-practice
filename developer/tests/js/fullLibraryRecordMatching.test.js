@@ -168,13 +168,71 @@ async function testUnknownFallbacks() {
     recordResult(testName, true, { enriched });
 }
 
+async function testNormalizedEntriesPreferAnswerDetailsSnapshot() {
+    const testName = '逐题明细快照优先于多选组回放字符串';
+    resetGlobalIndexes();
+    global.AnswerMatchCore = {
+        compareAnswers(userAnswer, correctAnswer) {
+            return String(userAnswer == null ? '' : userAnswer).trim().toLowerCase()
+                === String(correctAnswer == null ? '' : correctAnswer).trim().toLowerCase();
+        }
+    };
+    global.PracticeCore = {
+        contracts: {
+            resolveRecordCorrectAnswerMap(record) {
+                return Object.assign({}, record.correctAnswerMap || {});
+            }
+        }
+    };
+
+    const record = {
+        examId: 'p1-medium-57',
+        correctAnswerMap: { q9: 'A', q10: 'C', q11: 'C, E, G' },
+        answers: [
+            { questionId: 'q9', answer: 'A', isCorrect: true },
+            { questionId: 'q10', answer: 'C', isCorrect: true },
+            { questionId: 'q11', answer: 'C, D, G', isCorrect: false }
+        ],
+        answerComparison: {
+            q9: { userAnswer: 'A, C', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'A, C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        answerDetails: {
+            q9: { userAnswer: 'A', correctAnswer: 'A', isCorrect: true },
+            q10: { userAnswer: 'C', correctAnswer: 'C', isCorrect: true },
+            q11: { userAnswer: 'C, D, G', correctAnswer: 'C, E, G', isCorrect: false }
+        },
+        wrongReasons: {
+            q11: { category: '题干理解错误', note: 'They are very tiring to put on.' }
+        }
+    };
+
+    const entries = AnswerComparisonUtils.getNormalizedEntries(record);
+    const byKey = Object.fromEntries(entries.map(entry => [entry.canonicalKey, entry]));
+
+    assertStrictEqual(byKey.q9.userAnswer, 'A', 'q9 应显示逐题明细里的单题答案');
+    assertStrictEqual(byKey.q9.isCorrect, true, 'q9 应保留提交时正确判定');
+    assertStrictEqual(byKey.q10.userAnswer, 'C', 'q10 应显示逐题明细里的单题答案');
+    assertStrictEqual(byKey.q10.isCorrect, true, 'q10 应保留提交时正确判定');
+    assertStrictEqual(byKey.q11.isCorrect, false, 'q11 应保持错误状态');
+    assertStrictEqual(byKey.q11.wrongReason.category, '题干理解错误', 'q11 应带回已保存错因分类');
+
+    recordResult(testName, true, {
+        q9: byKey.q9,
+        q10: byKey.q10,
+        q11: byKey.q11
+    });
+}
+
 async function runAllTests() {
     const suite = [
         testUrlPathMatching,
         testFuzzyTitleMatching,
         testCategoryInferenceFromId,
         testEnrichedMetadataGuard,
-        testUnknownFallbacks
+        testUnknownFallbacks,
+        testNormalizedEntriesPreferAnswerDetailsSnapshot
     ];
 
     for (const testFn of suite) {

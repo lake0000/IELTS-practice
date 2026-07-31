@@ -354,6 +354,13 @@ body.hero-body {
     color: var(--shui-text-strong);
 }
 
+.hero-card__value--duration {
+    font-size: 1.85rem;
+    line-height: 1.12;
+    white-space: nowrap;
+    word-break: keep-all;
+}
+
 .hero-card__meta {
     margin-top: 6px;
     color: var(--shui-text-muted);

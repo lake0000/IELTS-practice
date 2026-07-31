@@ -235,7 +235,7 @@ class StorageManager {
                 }
 
                 this.dbName = 'ExamSystemDB';
-                this.dbVersion = 1;
+                this.dbVersion = 2;
 
                 console.log(`[Storage] 打开 IndexedDB 数据库: ${this.dbName}, 版本: ${this.dbVersion}`);
                 const request = indexedDB.open(this.dbName, this.dbVersion);

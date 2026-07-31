@@ -3441,6 +3441,59 @@ body.no-scroll {
     margin-left: auto;
 }
 
+.wrong-reason-review {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 16px;
+    margin: 0 8px 16px;
+    padding: 14px 18px;
+    border: 1px solid rgba(13, 13, 13, 0.18);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.52);
+    color: #0d0d0d;
+}
+
+.wrong-reason-review__title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+}
+
+.wrong-reason-review__summary {
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-gray-700);
+}
+
+.wrong-reason-review__tags {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.wrong-reason-chip,
+.record-wrong-reason-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px solid rgba(13, 13, 13, 0.1);
+    color: var(--color-gray-700);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+}
+
+.wrong-reason-count {
+    color: #0d9488;
+}
+
+.wrong-reason-count.has-pending {
+    color: #b45309;
+}
+
 .practice-history-list,
 #practice-history-list,
 #history-list {
@@ -3488,6 +3541,49 @@ body.no-scroll {
     position: relative;
     backdrop-filter: blur(10px);
     color: #0D0D0D;
+}
+
+.record-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.history-meta-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.history-meta-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(71, 85, 105, 0.18);
+    background: rgba(255, 255, 255, 0.62);
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.history-meta-tag--frequency {
+    border-color: rgba(20, 184, 166, 0.32);
+    background: rgba(204, 251, 241, 0.72);
+    color: #0f766e;
+}
+
+.history-meta-tag--difficulty {
+    border-color: rgba(245, 158, 11, 0.32);
+    background: rgba(254, 243, 199, 0.78);
+    color: #92400e;
 }
 
 .history-item:hover {
@@ -5914,6 +6010,24 @@ body.blue-dark-mode,
     color: #e7f0ea;
 }
 
+.bloom-dark-mode .history-meta-tag {
+    border-color: rgba(231, 240, 234, 0.22);
+    background: rgba(231, 240, 234, 0.1);
+    color: #e7f0ea;
+}
+
+.bloom-dark-mode .history-meta-tag--frequency {
+    border-color: rgba(53, 192, 161, 0.44);
+    background: rgba(53, 192, 161, 0.16);
+    color: #93e6cf;
+}
+
+.bloom-dark-mode .history-meta-tag--difficulty {
+    border-color: rgba(251, 191, 36, 0.42);
+    background: rgba(251, 191, 36, 0.14);
+    color: #fde68a;
+}
+
 .bloom-dark-mode .search-input {
     background: rgba(13, 26, 29, 0.92);
     border: 1px solid rgba(53, 192, 161, 0.28);
@@ -8062,5 +8176,22 @@ body.blue-dark-mode .practice-settings-block__head .hero-panel__muted {
     }
 }
 
+.result-meta-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 12px;
+}
 
-
+.result-meta-tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.72);
+    color: #64748b;
+    font-size: 0.86rem;
+    font-weight: 600;
+}

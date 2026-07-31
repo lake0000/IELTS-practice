@@ -609,6 +609,22 @@
         return normalized;
     }
 
+    function normalizeWrongReason(value) {
+        var source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        var category = normalizeValue(source.category ?? source.reason ?? source.type);
+        var note = normalizeValue(source.note ?? source.detail ?? source.text);
+        if (!category && !note) {
+            return null;
+        }
+        return {
+            category: category,
+            note: note,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
     function sanitizeComparisonMap(comparisonMap) {
         if (!comparisonMap || typeof comparisonMap !== 'object') {
             return {};
@@ -640,6 +656,10 @@
             if (hasMeaningfulValue(canonicalAnswer)) {
                 sanitized[key].canonicalAnswer = canonicalAnswer;
             }
+            var wrongReason = normalizeWrongReason(entry.wrongReason ?? entry.errorReason ?? entry.wrongReasonNote);
+            if (wrongReason) {
+                sanitized[key].wrongReason = wrongReason;
+            }
         });
         return sanitized;
     }
@@ -648,6 +668,7 @@
         normalizeValue: normalizeValue,
         hasMeaningfulValue: hasMeaningfulValue,
         normalizeValueList: normalizeValueList,
+        normalizeWrongReason: normalizeWrongReason,
         sanitizeComparisonMap: sanitizeComparisonMap
     };
 
@@ -1958,6 +1979,23 @@
         'true_false_not_given',
         'yes_no_not_given'
     ]);
+    const WRONG_REASON_OPTIONS = [
+        { value: '', label: '选择错因' },
+        { value: '定位错误', label: '定位错误' },
+        { value: '同义替换没看出', label: '同义替换没看出' },
+        { value: '题干理解错误', label: '题干理解错误' },
+        { value: '原文理解错误', label: '原文理解错误' },
+        { value: '答案格式错误', label: '答案格式错误' },
+        { value: '粗心漏看', label: '粗心漏看' },
+        { value: '时间不够', label: '时间不够' },
+        { value: '其他', label: '其他' }
+    ];
+    const WRONG_REASON_LOG_PREFIX = '[WrongReasonSave]';
+    const PRACTICE_RECORD_STORAGE_KEYS = [
+        'exam_system_practice_records',
+        'practice_records',
+        'old_prefix_practice_records'
+    ];
     const PART_ORDER = ['p1', 'p2', 'p3'];
     const navStatus = new Map();
     const scriptCache = new Map();
@@ -2041,7 +2079,11 @@
         sessionReadySent: false,
         parentWindow: global.opener || global.parent || null,
         windowSessionToken: '',
-        windowSessionIssuedAtMs: 0
+        windowSessionIssuedAtMs: 0,
+        wrongReasonSyncTimer: null,
+        wrongReasonTouchedIds: new Set(),
+        wrongReasonPendingSaveIds: new Set(),
+        wrongReasonBeforeUnloadInstalled: false
     };
 
     const dom = {
@@ -2172,18 +2214,26 @@
         const snapshot = timerSnapshot && typeof timerSnapshot === 'object'
             ? timerSnapshot
             : getPracticeTimerSnapshot();
-        const startTimeMs = Math.floor(Number(snapshot.effectiveStartTimeMs));
-        const duration = Math.max(minDurationSeconds, Math.round(Number(snapshot.durationSeconds)));
+        const rawStartTimeMs = Number(snapshot.effectiveStartTimeMs);
+        const startTimeMs = Number.isFinite(rawStartTimeMs)
+            ? Math.floor(rawStartTimeMs)
+            : Date.now();
+        const rawDuration = Number(snapshot.durationSeconds);
+        const duration = Math.max(minDurationSeconds, Number.isFinite(rawDuration) ? Math.round(rawDuration) : 0);
+        const rawEffectiveEndTimeMs = Number(snapshot.effectiveEndTimeMs);
+        const effectiveEndTimeMs = Number.isFinite(rawEffectiveEndTimeMs)
+            ? Math.max(startTimeMs, Math.floor(rawEffectiveEndTimeMs))
+            : Math.max(startTimeMs, startTimeMs + duration * 1000);
         const actualEndTimeMsRaw = Number(snapshot.actualEndTimeMs);
-        const endTimeMs = Number.isFinite(actualEndTimeMsRaw)
+        const actualEndTimeMs = Number.isFinite(actualEndTimeMsRaw)
             ? Math.floor(actualEndTimeMsRaw)
             : Date.now();
-        const effectiveEndTimeMs = Math.max(startTimeMs, startTimeMs + duration * 1000);
         return {
             duration,
             startTimeMs,
-            endTimeMs,
-            effectiveEndTimeMs
+            endTimeMs: effectiveEndTimeMs,
+            effectiveEndTimeMs,
+            actualEndTimeMs
         };
     }
 
@@ -2224,12 +2274,53 @@
         return minutes * 60;
     }
 
+    function isWrongReasonControl(control) {
+        return Boolean(
+            control
+            && control.classList
+            && (
+                control.classList.contains('wrong-reason-select')
+                || control.classList.contains('wrong-reason-note')
+            )
+        );
+    }
+
+    function getPendingWrongReasonCount() {
+        return state.wrongReasonPendingSaveIds.size + (state.wrongReasonSyncTimer ? 1 : 0);
+    }
+
+    function hasPendingWrongReasonSaves() {
+        return getPendingWrongReasonCount() > 0;
+    }
+
+    function handleWrongReasonBeforeUnload(event) {
+        if (!hasPendingWrongReasonSaves()) {
+            return undefined;
+        }
+        const message = '错因还没有确认保存，关闭后可能丢失。';
+        event.preventDefault();
+        event.returnValue = message;
+        return message;
+    }
+
+    function installWrongReasonBeforeUnloadGuard() {
+        if (state.wrongReasonBeforeUnloadInstalled) {
+            return;
+        }
+        state.wrongReasonBeforeUnloadInstalled = true;
+        global.addEventListener('beforeunload', handleWrongReasonBeforeUnload);
+    }
+
     function setTimerLockMode(enabled) {
         const locked = Boolean(enabled);
         state.timerLocked = locked;
         document.body.classList.toggle('timer-locked-mode', locked);
         document.querySelectorAll('input, textarea, select').forEach((control) => {
             if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) {
+                if (isWrongReasonControl(control)) {
+                    control.disabled = false;
+                    return;
+                }
                 control.disabled = locked || state.readOnly;
             }
         });
@@ -2643,8 +2734,8 @@
 
     function getReviewDictionaryContext() {
         return {
-            examId: state.examId,
-            dataKey: state.dataKey,
+            examId: state.examId || state.dataKey || deriveExamIdFromSessionId(state.sessionId) || null,
+            dataKey: state.dataKey || state.examId || deriveExamIdFromSessionId(state.sessionId) || null,
             title: state.dataset?.meta?.title || '',
             category: state.dataset?.meta?.category || '',
             frequency: state.dataset?.meta?.frequency || '',
@@ -2833,6 +2924,28 @@
         return global.__READING_EXAM_MANIFEST__ || {};
     }
 
+    function mergeDatasetManifestMeta(dataset, entry) {
+        if (!dataset || !entry) {
+            return dataset;
+        }
+        const meta = dataset.meta || {};
+        return {
+            ...dataset,
+            meta: {
+                ...meta,
+                examId: entry.examId || entry.id || meta.examId,
+                dataKey: entry.dataKey || meta.dataKey,
+                title: entry.title || meta.title,
+                category: entry.category || meta.category,
+                frequency: entry.frequency || meta.frequency,
+                difficultyScore: entry.difficultyScore ?? meta.difficultyScore,
+                path: entry.path || meta.path,
+                filename: entry.filename || meta.filename,
+                pdfFilename: entry.pdfFilename || meta.pdfFilename
+            }
+        };
+    }
+
     async function ensureDataset() {
         const manifest = await ensureManifest();
         const entry = manifest[state.dataKey] || manifest[state.examId];
@@ -2850,9 +2963,9 @@
         if (!dataset) {
             throw new Error(`reading_exam_dataset_missing:${entry.dataKey}`);
         }
-        state.dataset = dataset;
+        state.dataset = mergeDatasetManifestMeta(dataset, entry);
         state.dataKey = entry.dataKey;
-        return dataset;
+        return state.dataset;
     }
 
     function normalizeSuiteSequence(rawSequence = []) {
@@ -2899,8 +3012,9 @@
         if (!dataset) {
             throw new Error(`reading_exam_dataset_missing:${entry.dataKey}`);
         }
+        const mergedDataset = mergeDatasetManifestMeta(dataset, entry);
         return {
-            dataset,
+            dataset: mergedDataset,
             dataKey: entry.dataKey,
             manifestEntry: entry
         };
@@ -3366,6 +3480,175 @@
             }
         `;
         document.head.appendChild(style);
+    }
+
+    function ensureWrongReasonStyles() {
+        if (document.getElementById('reading-wrong-reason-style')) {
+            return;
+        }
+        const style = document.createElement('style');
+        style.id = 'reading-wrong-reason-style';
+        style.textContent = `
+            .wrong-reason-cell {
+                min-width: 220px;
+            }
+            .wrong-reason-controls {
+                display: grid;
+                gap: 6px;
+            }
+            .wrong-reason-select,
+            .wrong-reason-note {
+                width: 100%;
+                box-sizing: border-box;
+                border: 1px solid rgba(148, 163, 184, 0.75);
+                border-radius: 6px;
+                background: #fff;
+                color: #111827;
+                font-size: 13px;
+                line-height: 1.35;
+            }
+            .wrong-reason-select {
+                min-height: 30px;
+                padding: 4px 8px;
+            }
+            .wrong-reason-note {
+                min-height: 54px;
+                padding: 6px 8px;
+                resize: vertical;
+            }
+            .wrong-reason-save {
+                justify-self: start;
+                min-height: 28px;
+                padding: 4px 10px;
+                border: 1px solid rgba(37, 99, 235, 0.45);
+                border-radius: 6px;
+                background: rgba(239, 246, 255, 0.95);
+                color: #1d4ed8;
+                font-size: 13px;
+                line-height: 1.2;
+                cursor: pointer;
+            }
+            .wrong-reason-save:hover {
+                background: rgba(219, 234, 254, 1);
+            }
+            .wrong-reason-save--saved {
+                border-color: rgba(16, 185, 129, 0.55);
+                background: rgba(209, 250, 229, 0.95);
+                color: #047857;
+            }
+            .wrong-reason-placeholder {
+                color: #94a3b8;
+                font-size: 13px;
+            }
+            .result-question-jump {
+                border: 0;
+                background: transparent;
+                color: #dc2626;
+                font: inherit;
+                font-weight: 700;
+                cursor: pointer;
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
+            .result-answer-wrong {
+                color: #dc2626;
+                font-weight: 700;
+            }
+            .reading-answer-wrong-choice,
+            input.reading-answer-wrong-choice,
+            textarea.reading-answer-wrong-choice,
+            select.reading-answer-wrong-choice,
+            .match-dropzone.reading-answer-wrong-choice,
+            .drop-target-summary.reading-answer-wrong-choice {
+                border-color: rgba(220, 38, 38, 0.9) !important;
+                box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.22);
+                color: #b91c1c;
+            }
+            input[type="radio"].reading-answer-wrong-choice,
+            input[type="checkbox"].reading-answer-wrong-choice {
+                accent-color: #7f1d1d;
+                outline: 2px solid rgba(127, 29, 29, 0.72);
+                outline-offset: 2px;
+                box-shadow: none;
+            }
+            .reading-inline-wrong-reason,
+            .reading-inline-wrong-reason-row td {
+                margin-top: 8px;
+                padding: 8px 10px;
+                border-left: 3px solid rgba(220, 38, 38, 0.75);
+                background: rgba(254, 242, 242, 0.82);
+            }
+            .reading-inline-wrong-reason .wrong-reason-controls {
+                max-width: 560px;
+            }
+            .reading-question-error-focus {
+                outline: 2px solid rgba(220, 38, 38, 0.75);
+                outline-offset: 4px;
+                border-radius: 8px;
+                background: rgba(254, 226, 226, 0.35);
+                transition: background 160ms ease, outline-color 160ms ease;
+            }
+            input.reading-answer-error-focus,
+            textarea.reading-answer-error-focus,
+            select.reading-answer-error-focus,
+            .match-dropzone.reading-answer-error-focus,
+            .drop-target-summary.reading-answer-error-focus {
+                border-color: rgba(220, 38, 38, 0.85) !important;
+                box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.22);
+                color: #b91c1c;
+            }
+            body.dark-mode .wrong-reason-select,
+            body.dark-mode .wrong-reason-note {
+                border-color: rgba(71, 85, 105, 0.9);
+                background: #111827;
+                color: #e5e7eb;
+            }
+            body.dark-mode .wrong-reason-save {
+                border-color: rgba(96, 165, 250, 0.6);
+                background: rgba(30, 41, 59, 0.95);
+                color: #bfdbfe;
+            }
+            body.dark-mode .wrong-reason-save--saved {
+                border-color: rgba(52, 211, 153, 0.65);
+                background: rgba(6, 78, 59, 0.82);
+                color: #a7f3d0;
+            }
+            body.dark-mode .reading-inline-wrong-reason,
+            body.dark-mode .reading-inline-wrong-reason-row td {
+                background: rgba(127, 29, 29, 0.25);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function summarizeWrongReasonPayload(payload = {}) {
+        return {
+            recordId: payload.recordId || payload.id || null,
+            sessionId: payload.sessionId || null,
+            reviewSessionId: payload.reviewSessionId || null,
+            suiteSessionId: payload.suiteSessionId || null,
+            examId: payload.examId || null,
+            dataKey: payload.dataKey || null,
+            title: payload.title || payload.examTitle || null,
+            targetCount: Array.isArray(payload.wrongReasonTargets) ? payload.wrongReasonTargets.length : 0,
+            questionIds: Object.keys(payload.wrongReasons || {})
+        };
+    }
+
+    function logWrongReasonSave(level, event, detail = {}) {
+        const logger = console && typeof console[level] === 'function'
+            ? console[level]
+            : (console && typeof console.log === 'function' ? console.log : null);
+        if (!logger) {
+            return;
+        }
+        try {
+            let serialized = '';
+            try {
+                serialized = ` ${JSON.stringify(detail)}`;
+            } catch (_) { /* ignore */ }
+            logger.call(console, `${WRONG_REASON_LOG_PREFIX} ${event}${serialized}`, detail);
+        } catch (_) { /* ignore logging failures */ }
     }
 
     function ensureMemorizeStyles() {
@@ -4111,8 +4394,26 @@
     function normalizeQuestionId(rawValue) {
         if (!rawValue) return null;
         const value = String(rawValue).trim().toLowerCase();
+        const exactNumber = value.match(/^q?(\d+)$/);
+        if (exactNumber) {
+            return `q${exactNumber[1]}`;
+        }
         const match = value.match(/q(\d+)/);
         return match ? `q${match[1]}` : null;
+    }
+
+    function areQuestionIdsEquivalent(left, right) {
+        const leftText = String(left ?? '').trim();
+        const rightText = String(right ?? '').trim();
+        if (!leftText || !rightText) {
+            return false;
+        }
+        if (leftText === rightText) {
+            return true;
+        }
+        const normalizedLeft = normalizeQuestionId(leftText);
+        const normalizedRight = normalizeQuestionId(rightText);
+        return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
     }
 
     const READING_QUESTION_TYPE_NAMES = {
@@ -4269,10 +4570,21 @@
     }
 
     function findQuestionAnchor(questionId) {
+        const escapedQuestionId = escapeSelector(questionId);
+        const questionPane = dom.groups || document.getElementById('question-groups') || null;
+        const scopedCandidates = questionPane ? [
+            questionPane.querySelector(`#${escapedQuestionId}-anchor`),
+            questionPane.querySelector(`[data-question="${escapedQuestionId}"]`),
+            questionPane.querySelector(`[name="${escapedQuestionId}"]`),
+            questionPane.querySelector(`input[data-question-id="${escapedQuestionId}"], textarea[data-question-id="${escapedQuestionId}"], select[data-question-id="${escapedQuestionId}"]`),
+            questionPane.querySelector(`.match-dropzone[data-question-id="${escapedQuestionId}"], .drop-target-summary[data-question-id="${escapedQuestionId}"]`)
+        ].filter(Boolean) : [];
+        if (scopedCandidates.length) {
+            return scopedCandidates[0].closest?.('.unified-group, .question, .question-row, .question-item, li, tr, p') || scopedCandidates[0];
+        }
         const directCandidates = [
             document.getElementById(`${questionId}-anchor`),
             document.querySelector(`[data-question="${questionId}"]`),
-            document.querySelector(`[data-question-id="${questionId}"]`),
             document.querySelector(`[name="${questionId}"]`)
         ].filter(Boolean);
         if (directCandidates.length) {
@@ -4287,6 +4599,200 @@
             }
         }
         return null;
+    }
+
+    function getAnswerControls(questionId) {
+        if (!questionId) {
+            return [];
+        }
+        const escaped = escapeSelector(questionId);
+        const root = dom.groups || document;
+        const selector = [
+            `input[data-question-id="${escaped}"]`,
+            `textarea[data-question-id="${escaped}"]`,
+            `select[data-question-id="${escaped}"]`,
+            `input[name="${escaped}"]`,
+            `textarea[name="${escaped}"]`,
+            `select[name="${escaped}"]`,
+            `.match-dropzone[data-question="${escaped}"]`,
+            `.match-dropzone[data-question-id="${escaped}"]`,
+            `.drop-target-summary[data-question="${escaped}"]`,
+            `.drop-target-summary[data-question-id="${escaped}"]`
+        ].join(',');
+        return Array.from(root.querySelectorAll(selector));
+    }
+
+    function normalizeAnswerTokens(value) {
+        if (Array.isArray(value)) {
+            return value.map((item) => String(item == null ? '' : item).trim()).filter(Boolean);
+        }
+        return String(value == null ? '' : value)
+            .split(/\s*(?:[,;|/]|\band\b|\s+)\s*/i)
+            .map((item) => item.trim())
+            .filter(Boolean);
+    }
+
+    function clearInlineReviewMarkers() {
+        document.querySelectorAll('.reading-answer-wrong-choice').forEach((node) => {
+            node.classList.remove('reading-answer-wrong-choice');
+        });
+        document.querySelectorAll('.reading-inline-wrong-reason, .reading-inline-wrong-reason-row').forEach((node) => {
+            node.remove();
+        });
+    }
+
+    function markWrongAnswerChoice(entry = {}) {
+        const questionId = entry.questionId || '';
+        const controls = getAnswerControls(questionId);
+        const userTokens = new Set(normalizeAnswerTokens(entry.userAnswer).map((item) => item.toLowerCase()));
+        controls.forEach((control) => {
+            const tagName = String(control.tagName || '').toLowerCase();
+            const type = String(control.type || '').toLowerCase();
+            const value = String(control.value || control.dataset?.value || control.dataset?.option || '').trim();
+            let shouldMark = false;
+            if (type === 'radio' || type === 'checkbox') {
+                shouldMark = control.checked || (value && userTokens.has(value.toLowerCase()));
+            } else if (tagName === 'select') {
+                shouldMark = true;
+            } else if (type === 'text' || tagName === 'textarea' || tagName === 'input') {
+                shouldMark = true;
+            } else if (control.classList.contains('match-dropzone') || control.classList.contains('drop-target-summary')) {
+                shouldMark = true;
+            }
+            if (!shouldMark) {
+                return;
+            }
+            control.classList.add('reading-answer-wrong-choice');
+        });
+    }
+
+    function findInlineWrongReasonHost(questionId) {
+        const controls = getAnswerControls(questionId);
+        const first = controls[0] || findQuestionAnchor(questionId);
+        if (!first) {
+            return null;
+        }
+        const questionHost = first.closest?.('tr, .match-question-item, .question-row, .question-item, li, p, .unified-group') || first;
+        const directExplanation = questionHost.querySelector?.('.reading-question-explanation:last-child, .reading-question-explanation-list:last-child');
+        if (directExplanation) {
+            return directExplanation;
+        }
+        return questionHost;
+    }
+
+    function syncWrongReasonControls(questionId, reason, sourceContainer = null) {
+        const normalized = normalizeWrongReason(reason) || { category: '', note: '' };
+        getWrongReasonControlContainers(questionId).forEach((container) => {
+            if (container === sourceContainer) {
+                return;
+            }
+            const select = container.querySelector('.wrong-reason-select');
+            const note = container.querySelector('.wrong-reason-note');
+            if (select) {
+                select.value = normalized.category || '';
+            }
+            if (note) {
+                note.value = normalized.note || '';
+            }
+        });
+    }
+
+    function getWrongReasonControlContainers(questionId) {
+        return Array.from(document.querySelectorAll('.wrong-reason-controls[data-question-id]')).filter((container) => (
+            areQuestionIdsEquivalent(container.dataset.questionId, questionId)
+        ));
+    }
+
+    function attachWrongReasonControlEvents(root) {
+        if (!root || !root.querySelectorAll) {
+            return;
+        }
+        root.querySelectorAll('.wrong-reason-select, .wrong-reason-note').forEach((control) => {
+            if (control.dataset.wrongReasonBound === '1') {
+                return;
+            }
+            control.dataset.wrongReasonBound = '1';
+            control.addEventListener('change', handleWrongReasonInput);
+            control.addEventListener('input', handleWrongReasonInput);
+        });
+        root.querySelectorAll('.wrong-reason-save').forEach((button) => {
+            if (button.dataset.wrongReasonBound === '1') {
+                return;
+            }
+            button.dataset.wrongReasonBound = '1';
+            button.addEventListener('click', handleWrongReasonSave);
+        });
+    }
+
+    function insertInlineWrongReasonControls(entry = {}) {
+        if (entry.isCorrect) {
+            return;
+        }
+        const questionId = entry.questionId || '';
+        const host = findInlineWrongReasonHost(questionId);
+        if (!host || !host.parentNode) {
+            return;
+        }
+        const controlsHtml = buildWrongReasonControls(entry);
+        const tagName = String(host.tagName || '').toLowerCase();
+        if (tagName === 'tr') {
+            const table = host.closest('table');
+            const columnCount = Math.max(1, table ? (table.querySelectorAll('thead tr:first-child th').length || host.children.length || 1) : 1);
+            const row = document.createElement('tr');
+            row.className = 'reading-inline-wrong-reason-row';
+            row.dataset.questionId = questionId;
+            const cell = document.createElement('td');
+            cell.colSpan = columnCount;
+            cell.innerHTML = controlsHtml;
+            row.appendChild(cell);
+            host.parentNode.insertBefore(row, host.nextSibling);
+            attachWrongReasonControlEvents(row);
+            return;
+        }
+        const panel = document.createElement('div');
+        panel.className = 'reading-inline-wrong-reason';
+        panel.dataset.questionId = questionId;
+        panel.innerHTML = controlsHtml;
+        host.insertAdjacentElement('afterend', panel);
+        attachWrongReasonControlEvents(panel);
+    }
+
+    function renderInlineWrongReasonControls(results) {
+        clearInlineReviewMarkers();
+        Object.values(results?.answerComparison || {}).forEach((entry) => {
+            if (!entry || entry.isCorrect) {
+                return;
+            }
+            markWrongAnswerChoice(entry);
+            insertInlineWrongReasonControls(entry);
+        });
+    }
+
+    function highlightQuestionForReview(questionId) {
+        document.querySelectorAll('.reading-question-error-focus, .reading-answer-error-focus').forEach((node) => {
+            node.classList.remove('reading-question-error-focus', 'reading-answer-error-focus');
+        });
+        if (!questionId) {
+            return;
+        }
+        const escaped = escapeSelector(questionId);
+        const anchor = findQuestionAnchor(questionId);
+        if (anchor) {
+            anchor.classList.add('reading-question-error-focus');
+        }
+        const answerTargets = [
+            `input[data-question-id="${escaped}"]`,
+            `textarea[data-question-id="${escaped}"]`,
+            `select[data-question-id="${escaped}"]`,
+            `input[name="${escaped}"]`,
+            `textarea[name="${escaped}"]`,
+            `select[name="${escaped}"]`,
+            `.match-dropzone[data-question-id="${escaped}"]`,
+            `.drop-target-summary[data-question-id="${escaped}"]`
+        ].join(',');
+        document.querySelectorAll(answerTargets).forEach((node) => {
+            node.classList.add('reading-answer-error-focus');
+        });
     }
 
     function updateNavStatuses(results = null) {
@@ -4316,6 +4822,7 @@
             target?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
         }
         updateActiveQuestionHighlight(questionId);
+        highlightQuestionForReview(questionId);
     }
 
     function navigateToPart(partKey, options = {}) {
@@ -5203,6 +5710,41 @@
             .replace(/'/g, '&#39;');
     }
 
+    function formatResultFrequencyLabel(frequency) {
+        const raw = String(frequency || '').trim().toLowerCase();
+        if (!raw) return '';
+        const map = {
+            'ultra-high': '超高频',
+            'very-high': '次高频',
+            high: '高频',
+            medium: '中频',
+            mid: '中频',
+            low: '低频',
+            '超高频': '超高频',
+            '次高频': '次高频',
+            '高频': '高频',
+            '中频': '中频',
+            '低频': '低频'
+        };
+        return map[raw] || String(frequency).trim();
+    }
+
+    function formatResultDifficultyLabel(score) {
+        const value = Number(score);
+        if (!Number.isFinite(value)) return '';
+        return `难度 ${Number.isInteger(value) ? String(value) : String(value)}`;
+    }
+
+    function buildResultMetaTags() {
+        const meta = state.dataset?.meta || {};
+        const tags = [
+            formatResultFrequencyLabel(meta.frequency),
+            formatResultDifficultyLabel(meta.difficultyScore ?? meta.difficulty)
+        ].filter(Boolean);
+        if (!tags.length) return '';
+        return `<div class="result-meta-tags">${tags.map(tag => `<span class="result-meta-tag">${escapeHtml(tag)}</span>`).join('')}</div>`;
+    }
+
     function splitAnswerTokens(rawValue) {
         if (Array.isArray(rawValue)) {
             return rawValue
@@ -5659,25 +6201,1054 @@
         return buildResultsFromAnswers(state.dataset, collectAnswers());
     }
 
+    function normalizeWrongReason(value) {
+        const source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        const category = String(source.category || source.reason || source.type || '').trim();
+        const note = String(source.note || source.detail || source.text || '').trim();
+        if (!category && !note) {
+            return null;
+        }
+        return {
+            category,
+            note,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
+    function normalizeWrongReasonMap(value) {
+        if (!value || typeof value !== 'object') {
+            return {};
+        }
+        const normalized = {};
+        Object.entries(value).forEach(([questionId, reason]) => {
+            const nextReason = normalizeWrongReason(reason);
+            if (nextReason) {
+                normalized[questionId] = nextReason;
+            }
+        });
+        return normalized;
+    }
+
+    function readPracticeRecordsStorage() {
+        const snapshots = [];
+        for (const key of PRACTICE_RECORD_STORAGE_KEYS) {
+            let raw = null;
+            try {
+                raw = global.localStorage?.getItem(key) || null;
+            } catch (_) {
+                continue;
+            }
+            if (!raw) {
+                continue;
+            }
+            try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    snapshots.push({ key, raw, envelope: null, records: parsed });
+                    continue;
+                }
+                if (parsed && typeof parsed === 'object' && Array.isArray(parsed.data)) {
+                    snapshots.push({ key, raw, envelope: parsed, records: parsed.data });
+                }
+            } catch (_) {
+                // Try the next known app-owned practice record key.
+            }
+        }
+        return snapshots.find((snapshot) => Array.isArray(snapshot.records) && snapshot.records.length > 0)
+            || snapshots[0]
+            || { key: 'exam_system_practice_records', raw: null, envelope: null, records: [] };
+    }
+
+    function writePracticeRecordsStorage(snapshot, records) {
+        if (!snapshot || !Array.isArray(records)) {
+            return false;
+        }
+        const payload = snapshot.envelope && typeof snapshot.envelope === 'object'
+            ? Object.assign({}, snapshot.envelope, { data: records })
+            : records;
+        try {
+            global.localStorage?.setItem(snapshot.key || 'exam_system_practice_records', JSON.stringify(payload));
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function getRecordTimestamp(record) {
+        const candidates = [record?.updatedAt, record?.endTime, record?.date, record?.startTime, record?.timestamp];
+        for (const value of candidates) {
+            const time = value ? new Date(value).getTime() : NaN;
+            if (Number.isFinite(time)) {
+                return time;
+            }
+        }
+        return 0;
+    }
+
+    function isSuiteRecord(record) {
+        return Boolean(
+            record?.suiteMode
+            || (Array.isArray(record?.suiteEntries) && record.suiteEntries.length > 0)
+            || record?.suiteSessionId
+            || record?.metadata?.suiteSessionId
+            || record?.realData?.suiteSessionId
+            || String(record?.metadata?.practiceMode || '').toLowerCase() === 'suite'
+        );
+    }
+
+    function isWrongReasonFallbackRecord(record) {
+        return Boolean(
+            record?.source === 'wrong-reason-fallback'
+            || record?.metadata?.source === 'wrong-reason-fallback'
+            || record?.realData?.source === 'wrong-reason-fallback'
+        );
+    }
+
+    function getWrongReasonRecordQuality(record) {
+        if (!record || typeof record !== 'object') {
+            return -1000;
+        }
+        const answerCount = record.answerComparison && typeof record.answerComparison === 'object'
+            ? Object.keys(record.answerComparison).length
+            : 0;
+        const totalQuestions = Number(record.totalQuestions ?? record.scoreInfo?.total ?? record.realData?.totalQuestions ?? record.realData?.scoreInfo?.total ?? 0);
+        const duration = Number(record.duration ?? record.scoreInfo?.duration ?? record.scoreInfo?.timeSpent ?? record.realData?.duration ?? 0);
+        let score = 0;
+        if (isWrongReasonFallbackRecord(record)) {
+            score -= 1000;
+        }
+        if (Number.isFinite(duration) && duration > 0) {
+            score += 100;
+        }
+        if (Number.isFinite(totalQuestions) && totalQuestions > 1) {
+            score += 50;
+        }
+        if (answerCount > 1) {
+            score += 25;
+        }
+        return score;
+    }
+
+    function sortWrongReasonRecordCandidates(records = []) {
+        return (Array.isArray(records) ? records : []).slice().sort((a, b) => {
+            const qualityDiff = getWrongReasonRecordQuality(b) - getWrongReasonRecordQuality(a);
+            if (qualityDiff) {
+                return qualityDiff;
+            }
+            return getRecordTimestamp(b) - getRecordTimestamp(a);
+        });
+    }
+
+    function collectRecordWrongReasons(record, options = {}) {
+        const merged = Object.assign(
+            {},
+            normalizeWrongReasonMap(record?.wrongReasons),
+            normalizeWrongReasonMap(record?.realData?.wrongReasons),
+            normalizeWrongReasonMap(record?.rawData?.wrongReasons)
+        );
+        if (options.includeSuiteEntries && Array.isArray(record?.suiteEntries)) {
+            record.suiteEntries.forEach((entry) => {
+                const entryExamId = entry?.examId || entry?.metadata?.examId || '';
+                if (!entryExamId) {
+                    return;
+                }
+                const entryReasons = collectRecordWrongReasons(entry);
+                Object.entries(entryReasons).forEach(([questionId, reason]) => {
+                    const key = String(questionId).includes('::') ? questionId : `${entryExamId}::${questionId}`;
+                    merged[key] = reason;
+                });
+            });
+        }
+        return merged;
+    }
+
+    function mergeWrongReasonMap(existingReasons, incomingReasons) {
+        const merged = Object.assign({}, existingReasons || {});
+        Object.entries(incomingReasons || {}).forEach(([questionId, value]) => {
+            const reason = normalizeWrongReason(value);
+            if (reason) {
+                merged[questionId] = reason;
+            } else {
+                delete merged[questionId];
+            }
+        });
+        return merged;
+    }
+
+    function getWrongReasonPayloadQuestionIds(payload = {}) {
+        return Object.keys(payload.wrongReasons || {}).map((questionId) => String(questionId));
+    }
+
+    function markWrongReasonPending(questionId) {
+        if (questionId !== undefined && questionId !== null && String(questionId)) {
+            state.wrongReasonPendingSaveIds.add(String(questionId));
+        }
+    }
+
+    function clearWrongReasonPending(questionIds = []) {
+        questionIds.forEach((questionId) => {
+            state.wrongReasonPendingSaveIds.delete(String(questionId));
+            state.wrongReasonTouchedIds.delete(String(questionId));
+        });
+    }
+
+    function setWrongReasonSaveButtons(questionId, status) {
+        if (!questionId) {
+            return;
+        }
+        const saved = status === 'saved';
+        const label = saved
+            ? '已保存'
+            : (status === 'saving' ? '保存中' : '未保存');
+        getWrongReasonControlContainers(questionId).forEach((container) => {
+            const button = container.querySelector('.wrong-reason-save');
+            if (!button) {
+                return;
+            }
+            button.textContent = label;
+            button.classList.toggle('wrong-reason-save--saved', saved);
+        });
+    }
+
+    function setWrongReasonSaveButtonsForPayload(payload, status) {
+        getWrongReasonPayloadQuestionIds(payload).forEach((questionId) => {
+            setWrongReasonSaveButtons(questionId, status);
+        });
+    }
+
+    function recordHasWrongReasons(record, wrongReasons, payload = {}) {
+        if (!record || !wrongReasons || typeof wrongReasons !== 'object') {
+            return false;
+        }
+        const expected = mapWrongReasonKeysForRecord(record, wrongReasons, payload);
+        const persisted = collectRecordWrongReasons(record, { includeSuiteEntries: true });
+        return Object.entries(expected).every(([questionId, expectedReason]) => {
+            const normalizedExpected = normalizeWrongReason(expectedReason);
+            if (!normalizedExpected) {
+                return true;
+            }
+            const normalizedPersisted = normalizeWrongReason(persisted[questionId]);
+            return Boolean(
+                normalizedPersisted
+                && normalizedPersisted.category === normalizedExpected.category
+                && normalizedPersisted.note === normalizedExpected.note
+            );
+        });
+    }
+
+    function applyWrongReasonsToComparisonMap(target, wrongReasons) {
+        if (!target || typeof target !== 'object') {
+            return;
+        }
+        Object.entries(wrongReasons || {}).forEach(([questionId, reasonValue]) => {
+            const targetKey = target[questionId]
+                ? questionId
+                : Object.keys(target).find((key) => areQuestionIdsEquivalent(key, questionId));
+            const entry = targetKey ? target[targetKey] : null;
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            const reason = normalizeWrongReason(reasonValue);
+            if (reason) {
+                entry.wrongReason = reason;
+            } else {
+                delete entry.wrongReason;
+            }
+        });
+    }
+
+    function mapWrongReasonKeysForRecord(record, wrongReasons, payload = {}) {
+        const mapped = {};
+        const targetExamId = payload.examId || payload.dataKey || deriveExamIdFromSessionId(payload.sessionId) || '';
+        const shouldPrefix = isSuiteRecord(record)
+            && targetExamId
+            && targetExamId !== record?.examId
+            && !String(targetExamId).startsWith('suite-');
+        Object.entries(wrongReasons || {}).forEach(([questionId, reason]) => {
+            const key = shouldPrefix && !String(questionId).includes('::')
+                ? `${targetExamId}::${questionId}`
+                : questionId;
+            mapped[key] = reason;
+        });
+        return mapped;
+    }
+
+    function applyWrongReasonsToSuiteEntries(record, localWrongReasons, payload = {}) {
+        if (!Array.isArray(record?.suiteEntries)) {
+            return;
+        }
+        const targetExamId = payload.examId || payload.dataKey || deriveExamIdFromSessionId(payload.sessionId) || '';
+        if (!targetExamId || targetExamId === record.examId || String(targetExamId).startsWith('suite-')) {
+            return;
+        }
+        record.suiteEntries.forEach((entry) => {
+            const entryExamId = entry?.examId || entry?.metadata?.examId || '';
+            if (!entry || entryExamId !== targetExamId) {
+                return;
+            }
+            entry.wrongReasons = mergeWrongReasonMap(collectRecordWrongReasons(entry), localWrongReasons);
+            applyWrongReasonsToComparisonMap(entry.answerComparison, localWrongReasons);
+            applyWrongReasonsToComparisonMap(entry.scoreInfo?.details, localWrongReasons);
+            if (entry.rawData && typeof entry.rawData === 'object') {
+                entry.rawData.wrongReasons = mergeWrongReasonMap(collectRecordWrongReasons(entry.rawData), localWrongReasons);
+                applyWrongReasonsToComparisonMap(entry.rawData.answerComparison, localWrongReasons);
+                applyWrongReasonsToComparisonMap(entry.rawData.scoreInfo?.details, localWrongReasons);
+            }
+        });
+    }
+
+    function buildRecordWithWrongReasons(record, wrongReasons, payload = {}) {
+        const next = JSON.parse(JSON.stringify(record || {}));
+        const originalTiming = {
+            id: next.id,
+            sessionId: next.sessionId,
+            startTime: next.startTime,
+            endTime: next.endTime,
+            date: next.date,
+            duration: next.duration,
+            createdAt: next.createdAt,
+            updatedAt: next.updatedAt
+        };
+        const mappedReasons = mapWrongReasonKeysForRecord(next, wrongReasons, payload);
+        const mergedReasons = mergeWrongReasonMap(
+            collectRecordWrongReasons(next, { includeSuiteEntries: true }),
+            mappedReasons
+        );
+        next.wrongReasons = mergedReasons;
+        next.answerComparison = next.answerComparison && typeof next.answerComparison === 'object'
+            ? next.answerComparison
+            : {};
+        applyWrongReasonsToComparisonMap(next.answerComparison, mappedReasons);
+        if (next.realData && typeof next.realData === 'object') {
+            next.realData.wrongReasons = JSON.parse(JSON.stringify(mergedReasons));
+            next.realData.answerComparison = next.realData.answerComparison && typeof next.realData.answerComparison === 'object'
+                ? next.realData.answerComparison
+                : JSON.parse(JSON.stringify(next.answerComparison));
+            applyWrongReasonsToComparisonMap(next.realData.answerComparison, mappedReasons);
+        }
+        applyWrongReasonsToComparisonMap(next.answerDetails, mappedReasons);
+        applyWrongReasonsToComparisonMap(next.scoreInfo?.details, mappedReasons);
+        applyWrongReasonsToComparisonMap(next.realData?.scoreInfo?.details, mappedReasons);
+        applyWrongReasonsToSuiteEntries(next, wrongReasons, payload);
+        Object.assign(next, originalTiming);
+        next.metadata = next.metadata && typeof next.metadata === 'object' ? next.metadata : {};
+        const canonicalExamId = next.examId
+            || next.dataKey
+            || payload.examId
+            || payload.dataKey
+            || deriveExamIdFromSessionId(next.sessionId)
+            || deriveExamIdFromSessionId(payload.sessionId)
+            || null;
+        if (canonicalExamId) {
+            next.examId = next.examId || canonicalExamId;
+            next.dataKey = next.dataKey || canonicalExamId;
+            next.derivedExamId = next.derivedExamId || canonicalExamId;
+            next.metadata.examId = next.metadata.examId || canonicalExamId;
+            next.metadata.dataKey = next.metadata.dataKey || canonicalExamId;
+            next.metadata.derivedExamId = next.metadata.derivedExamId || canonicalExamId;
+        }
+        next.metadata.wrongReasonUpdatedAt = payload.updatedAt || new Date().toISOString();
+        if (next.realData && typeof next.realData === 'object') {
+            if (canonicalExamId) {
+                next.realData.examId = next.realData.examId || canonicalExamId;
+                next.realData.dataKey = next.realData.dataKey || canonicalExamId;
+                next.realData.derivedExamId = next.realData.derivedExamId || canonicalExamId;
+            }
+            next.realData.wrongReasonUpdatedAt = next.metadata.wrongReasonUpdatedAt;
+        }
+        return next;
+    }
+
+    function getRecordExamIds(record = {}) {
+        const metadata = record?.metadata || {};
+        const realData = record?.realData || {};
+        const rawData = record?.rawData || {};
+        return [
+            record?.examId,
+            record?.dataKey,
+            record?.derivedExamId,
+            metadata.examId,
+            metadata.dataKey,
+            metadata.derivedExamId,
+            realData.examId,
+            realData.dataKey,
+            realData.derivedExamId,
+            rawData.examId,
+            rawData.dataKey,
+            rawData.derivedExamId,
+            deriveExamIdFromSessionId(record?.sessionId),
+            deriveExamIdFromSessionId(record?.id),
+            deriveExamIdFromSessionId(metadata.sessionId),
+            deriveExamIdFromSessionId(realData.sessionId),
+            deriveExamIdFromSessionId(rawData.sessionId)
+        ].map((value) => String(value || '').trim()).filter(Boolean);
+    }
+
+    function deriveExamIdFromSessionId(value) {
+        const text = String(value || '').trim();
+        if (!text) {
+            return null;
+        }
+        const match = text.match(/^([pc]\d-(?:low|medium|high)-\d+)(?:_|$)/i);
+        return match ? match[1] : null;
+    }
+
+    function normalizeRecordTitle(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[’‘]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[\s\-_/]+/g, ' ')
+            .replace(/^[pc]\s*[123]\s*(low|medium|high|次高频|高频|中频|低频)?\s*/i, '')
+            .trim();
+    }
+
+    function getRecordTitles(record = {}) {
+        const metadata = record?.metadata || {};
+        const realData = record?.realData || {};
+        const rawData = record?.rawData || {};
+        return [
+            record?.title,
+            record?.examTitle,
+            metadata.title,
+            metadata.examTitle,
+            realData.title,
+            realData.examTitle,
+            rawData.title,
+            rawData.examTitle
+        ].map((value) => normalizeRecordTitle(value)).filter(Boolean);
+    }
+
+    function recordMatchesTitle(record, title) {
+        const target = normalizeRecordTitle(title);
+        if (!target) {
+            return false;
+        }
+        return getRecordTitles(record).some((candidate) => {
+            if (!candidate) {
+                return false;
+            }
+            if (candidate === target) {
+                return true;
+            }
+            return candidate.length >= 12 && target.includes(candidate)
+                || target.length >= 12 && candidate.includes(target);
+        });
+    }
+
+    function recordMatchesExam(record, examId) {
+        const target = String(examId || '').trim();
+        if (!target) {
+            return true;
+        }
+        const normalizeId = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        const normalizedTarget = normalizeId(target);
+        return getRecordExamIds(record).some((value) => {
+            const candidate = normalizeId(value);
+            return Boolean(
+                candidate
+                && (
+                    candidate === normalizedTarget
+                    || candidate.endsWith(`-${normalizedTarget}`)
+                    || normalizedTarget.endsWith(`-${candidate}`)
+                )
+            );
+        });
+    }
+
+    function recordMatchesWrongReasonIdentity(record, examId, title) {
+        return recordMatchesExam(record, examId) || recordMatchesTitle(record, title);
+    }
+
+    function comparisonMapHasQuestion(map, questionId) {
+        if (!map || typeof map !== 'object' || !questionId) {
+            return false;
+        }
+        return Object.entries(map).some(([key, entry]) => (
+            areQuestionIdsEquivalent(key, questionId)
+            || areQuestionIdsEquivalent(entry?.questionId, questionId)
+            || areQuestionIdsEquivalent(entry?.displayNumber, questionId)
+            || areQuestionIdsEquivalent(entry?.questionNumber, questionId)
+        ));
+    }
+
+    function recordContainsWrongReasonQuestions(record, questionIds = [], targetExamId = '') {
+        const ids = questionIds.filter(Boolean);
+        if (!record || ids.length === 0) {
+            return false;
+        }
+        const maps = [
+            record.answerComparison,
+            record.answerDetails,
+            record.scoreInfo?.details,
+            record.realData?.answerComparison,
+            record.realData?.answerDetails,
+            record.realData?.scoreInfo?.details,
+            record.rawData?.answerComparison,
+            record.rawData?.answerDetails,
+            record.rawData?.scoreInfo?.details
+        ];
+        if (ids.every((questionId) => maps.some((map) => comparisonMapHasQuestion(map, questionId)))) {
+            return true;
+        }
+        if (!Array.isArray(record.suiteEntries)) {
+            return false;
+        }
+        return record.suiteEntries.some((entry) => {
+            if (!entry || (targetExamId && !recordMatchesExam(entry, targetExamId))) {
+                return false;
+            }
+            const entryMaps = [
+                entry.answerComparison,
+                entry.answerDetails,
+                entry.scoreInfo?.details,
+                entry.rawData?.answerComparison,
+                entry.rawData?.answerDetails,
+                entry.rawData?.scoreInfo?.details
+            ];
+            return ids.every((questionId) => entryMaps.some((map) => comparisonMapHasQuestion(map, questionId)));
+        });
+    }
+
+    function summarizeRecordCandidates(records = []) {
+        return (Array.isArray(records) ? records : []).slice(0, 8).map((record) => ({
+            id: record?.id || null,
+            sessionId: record?.sessionId || record?.metadata?.sessionId || null,
+            examIds: getRecordExamIds(record).slice(0, 6),
+            titles: getRecordTitles(record).slice(0, 4),
+            answerKeys: record?.answerComparison && typeof record.answerComparison === 'object'
+                ? Object.keys(record.answerComparison).slice(0, 10)
+                : [],
+            scoreKeys: record?.scoreInfo?.details && typeof record.scoreInfo.details === 'object'
+                ? Object.keys(record.scoreInfo.details).slice(0, 10)
+                : []
+        }));
+    }
+
+    function findPracticeRecordForWrongReasons(records, payload = {}) {
+        const list = Array.isArray(records) ? records : [];
+        const recordId = payload.recordId || payload.id || '';
+        if (recordId) {
+            const direct = list.find((record) => record && (String(record.id) === String(recordId) || String(record.sessionId) === String(recordId)));
+            if (direct && !isWrongReasonFallbackRecord(direct)) {
+                logWrongReasonSave('info', 'match:explicit-id', {
+                    payload: summarizeWrongReasonPayload(payload),
+                    matchedRecordId: direct.id || null
+                });
+                return direct;
+            }
+            if (direct) {
+                logWrongReasonSave('warn', 'match:skip-fallback-explicit-id', {
+                    payload: summarizeWrongReasonPayload(payload),
+                    skippedRecordId: direct.id || null
+                });
+            }
+        }
+        const suiteSessionId = payload.suiteSessionId || '';
+        const examId = payload.examId || payload.dataKey || deriveExamIdFromSessionId(payload.sessionId) || '';
+        const examTitle = payload.title || payload.examTitle || '';
+        const questionIds = Object.keys(payload.wrongReasons || {});
+        if (suiteSessionId) {
+            const suiteRecord = list
+                .filter((record) => record && !isWrongReasonFallbackRecord(record) && isSuiteRecord(record) && (
+                    record.id === suiteSessionId
+                    || record.sessionId === suiteSessionId
+                    || record.suiteSessionId === suiteSessionId
+                    || record.metadata?.suiteSessionId === suiteSessionId
+                    || record.realData?.suiteSessionId === suiteSessionId
+                ))
+                .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))[0] || null;
+            logWrongReasonSave(suiteRecord ? 'info' : 'warn', 'match:suite-session', {
+                payload: summarizeWrongReasonPayload(payload),
+                matchedRecordId: suiteRecord?.id || null,
+                candidateCount: list.length
+            });
+            if (suiteRecord) {
+                return suiteRecord;
+            }
+        }
+        const sessionId = payload.sessionId || '';
+        const sameExamSingles = list.filter((record) => {
+            if (!record || isWrongReasonFallbackRecord(record) || isSuiteRecord(record)) {
+                return false;
+            }
+            return recordMatchesWrongReasonIdentity(record, examId, examTitle);
+        });
+        if (sessionId) {
+            const sameSession = sameExamSingles
+                .filter((record) => record.sessionId === sessionId || record.realData?.sessionId === sessionId || record.metadata?.sessionId === sessionId)
+                .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))[0] || null;
+            if (sameSession) {
+                logWrongReasonSave('info', 'match:single-session', {
+                    payload: summarizeWrongReasonPayload(payload),
+                    matchedRecordId: sameSession.id || null
+                });
+                return sameSession;
+            }
+        }
+        const sortedSameExam = sortWrongReasonRecordCandidates(sameExamSingles);
+        const questionMatched = sortedSameExam.filter((record) => recordContainsWrongReasonQuestions(record, questionIds, examId));
+        if (questionMatched.length > 0) {
+            logWrongReasonSave('info', 'match:single-exam-question-fallback', {
+                payload: summarizeWrongReasonPayload(payload),
+                matchedRecordId: questionMatched[0]?.id || null,
+                sameExamCount: sortedSameExam.length,
+                questionMatchedCount: questionMatched.length
+            });
+            return questionMatched[0];
+        }
+        if (sortedSameExam.length === 1) {
+            logWrongReasonSave('info', 'match:single-exam-only-fallback', {
+                payload: summarizeWrongReasonPayload(payload),
+                matchedRecordId: sortedSameExam[0]?.id || null
+            });
+            return sortedSameExam[0];
+        }
+        logWrongReasonSave('warn', 'match:single-exam-ambiguous', {
+            payload: summarizeWrongReasonPayload(payload),
+            matchedRecordId: null,
+            sameExamCount: sortedSameExam.length,
+            questionMatchedCount: questionMatched.length,
+            candidateCount: list.length,
+            sampleRecords: summarizeRecordCandidates(list)
+        });
+        return null;
+    }
+
+    function saveWrongReasonsLocally(payload = {}) {
+        const snapshot = readPracticeRecordsStorage();
+        if (!snapshot) {
+            logWrongReasonSave('warn', 'local:read-failed', {
+                payload: summarizeWrongReasonPayload(payload)
+            });
+            return false;
+        }
+        const records = Array.isArray(snapshot.records) ? snapshot.records.slice() : [];
+        logWrongReasonSave('info', 'local:read', {
+            payload: summarizeWrongReasonPayload(payload),
+            storageKey: snapshot.key || null,
+            recordCount: records.length
+        });
+        const record = findPracticeRecordForWrongReasons(records, payload);
+        let nextRecord = null;
+        let nextRecords = records;
+        if (record) {
+            nextRecord = buildRecordWithWrongReasons(record, payload.wrongReasons || {}, payload);
+            nextRecords = records.map((entry) => entry === record ? nextRecord : entry);
+        } else {
+            logWrongReasonSave('warn', 'local:no-target-record', {
+                payload: summarizeWrongReasonPayload(payload)
+            });
+            return false;
+        }
+        nextRecords.sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a));
+        if (!writePracticeRecordsStorage(snapshot, nextRecords)) {
+            logWrongReasonSave('warn', 'local:write-failed', {
+                payload: summarizeWrongReasonPayload(payload),
+                storageKey: snapshot.key || null
+            });
+            return false;
+        }
+        const persistedSnapshot = readPracticeRecordsStorage();
+        const persistedRecord = findPracticeRecordForWrongReasons(persistedSnapshot?.records || [], payload) || nextRecord;
+        const verified = recordHasWrongReasons(persistedRecord, payload.wrongReasons || {}, payload);
+        logWrongReasonSave(verified ? 'info' : 'warn', 'local:verified', {
+            payload: summarizeWrongReasonPayload(payload),
+            storageKey: snapshot.key || null,
+            matchedRecordId: persistedRecord?.id || null,
+            verified
+        });
+        return verified;
+    }
+
+    function verifyWrongReasonsWithPracticeRecordApi(api, payload = {}, candidateRecord = null) {
+        if (!api) {
+            return Promise.resolve(recordHasWrongReasons(candidateRecord, payload.wrongReasons || {}, payload));
+        }
+        if (recordHasWrongReasons(candidateRecord, payload.wrongReasons || {}, payload)) {
+            return Promise.resolve(true);
+        }
+        const candidateId = candidateRecord?.id || payload.recordId || payload.id || null;
+        const readById = candidateId && typeof api.getById === 'function'
+            ? Promise.resolve(api.getById(candidateId)).catch(() => null)
+            : Promise.resolve(null);
+        return readById.then((recordById) => {
+            if (recordHasWrongReasons(recordById, payload.wrongReasons || {}, payload)) {
+                return true;
+            }
+            if (typeof api.list !== 'function') {
+                return false;
+            }
+            return Promise.resolve(api.list()).then((records) => {
+                const persistedRecord = findPracticeRecordForWrongReasons(records, payload);
+                return recordHasWrongReasons(persistedRecord, payload.wrongReasons || {}, payload);
+            }).catch(() => false);
+        });
+    }
+
+    function saveWrongReasonsWithPracticeRecordApi(payload = {}) {
+        const api = global.PracticeRecordAPI;
+        if (!api || typeof api.list !== 'function' || typeof api.saveRecord !== 'function') {
+            logWrongReasonSave('warn', 'api:unavailable', {
+                payload: summarizeWrongReasonPayload(payload),
+                hasApi: Boolean(api),
+                hasList: typeof api?.list === 'function',
+                hasSaveRecord: typeof api?.saveRecord === 'function'
+            });
+            return Promise.resolve(false);
+        }
+        return Promise.resolve(api.list()).then((records) => {
+            logWrongReasonSave('info', 'api:list', {
+                payload: summarizeWrongReasonPayload(payload),
+                recordCount: Array.isArray(records) ? records.length : null
+            });
+            const existing = findPracticeRecordForWrongReasons(records, payload);
+            const nextRecord = existing ? buildRecordWithWrongReasons(existing, payload.wrongReasons || {}, payload) : null;
+            if (!nextRecord) {
+                logWrongReasonSave('warn', 'api:no-target-record', {
+                    payload: summarizeWrongReasonPayload(payload)
+                });
+                return false;
+            }
+            return Promise.resolve(api.saveRecord(nextRecord, {
+                currentVersion: (global.scoreStorage && global.scoreStorage.currentVersion) || '0.6.2-fix',
+                maxRecords: (global.scoreStorage && global.scoreStorage.maxRecords) || 1000,
+                updateStats: false
+            })).then((savedRecord) => verifyWrongReasonsWithPracticeRecordApi(api, payload, savedRecord || nextRecord));
+        }).catch((error) => {
+            logWrongReasonSave('warn', 'api:error', {
+                payload: summarizeWrongReasonPayload(payload),
+                error: error?.message || String(error)
+            });
+            return false;
+        });
+    }
+
+    function getWrongReasonForEntry(entry = {}) {
+        return normalizeWrongReason(entry.wrongReason || entry.wrongReasonNote || entry.errorReason || null);
+    }
+
+    function collectWrongReasonMap(results = state.lastResults, options = {}) {
+        const map = {};
+        const onlyTouched = options.onlyTouched === true && state.wrongReasonTouchedIds.size > 0;
+        Object.entries(results?.answerComparison || {}).forEach(([questionId, entry]) => {
+            if (entry?.isCorrect) {
+                return;
+            }
+            if (onlyTouched && !Array.from(state.wrongReasonTouchedIds).some((touchedId) => areQuestionIdsEquivalent(touchedId, questionId))) {
+                return;
+            }
+            const reason = getWrongReasonForEntry(entry);
+            map[questionId] = reason;
+        });
+        return map;
+    }
+
+    function collectWrongReasonTargets(results = state.lastResults, wrongReasons = {}) {
+        const ids = Object.keys(wrongReasons || {});
+        return ids.map((questionId) => {
+            const matched = findAnswerComparisonEntry(questionId, results);
+            const entry = matched?.entry || {};
+            return {
+                questionId: matched?.key || questionId,
+                userAnswer: entry.userAnswer,
+                correctAnswer: entry.correctAnswer,
+                isCorrect: entry.isCorrect === true
+            };
+        });
+    }
+
+    function findAnswerComparisonEntry(questionId, results = state.lastResults) {
+        const comparison = results?.answerComparison || null;
+        if (!comparison || !questionId) {
+            return null;
+        }
+        if (comparison[questionId]) {
+            return { key: questionId, entry: comparison[questionId] };
+        }
+        const matchedKey = Object.keys(comparison).find((key) => (
+            areQuestionIdsEquivalent(key, questionId)
+            || areQuestionIdsEquivalent(comparison[key]?.questionId, questionId)
+        ));
+        return matchedKey ? { key: matchedKey, entry: comparison[matchedKey] } : null;
+    }
+
+    function updateWrongReasonInResults(questionId, reason) {
+        if (!questionId || !state.lastResults?.answerComparison) {
+            return;
+        }
+        const matched = findAnswerComparisonEntry(questionId);
+        if (!matched || !matched.entry) {
+            logWrongReasonSave('warn', 'input:no-answer-comparison-entry', {
+                questionId,
+                normalizedQuestionId: normalizeQuestionId(questionId),
+                keys: Object.keys(state.lastResults.answerComparison || {})
+            });
+            return;
+        }
+        const recordQuestionId = matched.key;
+        state.wrongReasonTouchedIds.add(recordQuestionId);
+        const entry = matched.entry;
+        const normalized = normalizeWrongReason(reason);
+        markWrongReasonPending(recordQuestionId);
+        if (normalized) {
+            entry.wrongReason = normalized;
+        } else {
+            delete entry.wrongReason;
+        }
+        const details = state.lastResults.scoreInfo?.details;
+        const detailKey = details && Object.keys(details).find((key) => areQuestionIdsEquivalent(key, recordQuestionId));
+        if (details && detailKey && details[detailKey]) {
+            if (normalized) {
+                details[detailKey].wrongReason = normalized;
+            } else {
+                delete details[detailKey].wrongReason;
+            }
+        }
+        syncWrongReasonControls(recordQuestionId, normalized);
+    }
+
+    function scheduleWrongReasonSync() {
+        if (!state.lastResults) {
+            return;
+        }
+        if (state.wrongReasonSyncTimer) {
+            global.clearTimeout(state.wrongReasonSyncTimer);
+        }
+        state.wrongReasonSyncTimer = global.setTimeout(() => {
+            syncWrongReasonsNow().catch(() => {});
+        }, 350);
+    }
+
+    function saveWrongReasonsDirectly(payload) {
+        const candidates = [global.opener, state.parentWindow, global.parent];
+        const visited = new Set();
+        for (let index = 0; index < candidates.length; index += 1) {
+            const target = candidates[index];
+            if (!target || target === global || visited.has(target)) {
+                continue;
+            }
+            visited.add(target);
+            try {
+                if (typeof target.savePracticeWrongReasonUpdate === 'function') {
+                    state.parentWindow = target;
+                    logWrongReasonSave('info', 'direct:call-parent', {
+                        payload: summarizeWrongReasonPayload(payload)
+                    });
+                    return Promise.resolve(target.savePracticeWrongReasonUpdate(payload)).then((savedRecord) => {
+                        const targetApi = target.PracticeRecordAPI || null;
+                        return verifyWrongReasonsWithPracticeRecordApi(targetApi, payload, savedRecord).then((verified) => {
+                            if (!verified) {
+                                logWrongReasonSave('warn', 'direct:verify-failed', {
+                                    payload: summarizeWrongReasonPayload(payload),
+                                    savedRecordId: savedRecord?.id || null
+                                });
+                                return false;
+                            }
+                            if (typeof target.syncPracticeRecords === 'function') {
+                                target.setTimeout(() => target.syncPracticeRecords(), 200);
+                            }
+                            logWrongReasonSave('info', 'direct:verified', {
+                                payload: summarizeWrongReasonPayload(payload),
+                                savedRecordId: savedRecord?.id || null
+                            });
+                            return true;
+                        });
+                    }).catch((error) => {
+                        logWrongReasonSave('warn', 'direct:error', {
+                            payload: summarizeWrongReasonPayload(payload),
+                            error: error?.message || String(error)
+                        });
+                        postMessage('PRACTICE_WRONG_REASON_UPDATE', payload);
+                        return false;
+                    });
+                }
+            } catch (_) {
+                // try next candidate
+            }
+        }
+        return Promise.resolve(false);
+    }
+
+    function saveWrongReasonsWithSqliteBackend(payload = {}) {
+        const backend = global.SqlitePracticeBackend;
+        if (!backend || typeof backend.saveWrongReasons !== 'function') {
+            return Promise.resolve(false);
+        }
+        return Promise.resolve(backend.saveWrongReasons(payload)).then((savedRecord) => {
+            const verified = recordHasWrongReasons(savedRecord, payload.wrongReasons || {}, payload);
+            logWrongReasonSave(verified ? 'info' : 'warn', verified ? 'sqlite:verified' : 'sqlite:verify-failed', {
+                payload: summarizeWrongReasonPayload(payload),
+                savedRecordId: savedRecord?.id || null
+            });
+            return verified;
+        }).catch((error) => {
+            logWrongReasonSave('warn', 'sqlite:error', {
+                payload: summarizeWrongReasonPayload(payload),
+                error: error?.message || String(error)
+            });
+            return false;
+        });
+    }
+
+    function syncWrongReasonsNow() {
+        if (!state.lastResults) {
+            return Promise.resolve(false);
+        }
+        if (state.wrongReasonSyncTimer) {
+            global.clearTimeout(state.wrongReasonSyncTimer);
+            state.wrongReasonSyncTimer = null;
+        }
+        const wrongReasons = collectWrongReasonMap(state.lastResults, { onlyTouched: true });
+        if (Object.keys(wrongReasons).length === 0) {
+            logWrongReasonSave('warn', 'sync:no-touched-reasons', {
+                examId: state.examId,
+                dataKey: state.dataKey
+            });
+            return Promise.resolve(false);
+        }
+        const payload = {
+            recordId: state.reviewContext?.recordId || state.reviewContext?.practiceRecordId || state.reviewContext?.id || null,
+            sessionId: state.sessionId || state.reviewContext?.sessionId || null,
+            reviewSessionId: state.reviewSessionId || state.reviewContext?.reviewSessionId || null,
+            suiteSessionId: state.suiteSessionId || state.simulationCtx?.suiteSessionId || state.reviewContext?.suiteSessionId || null,
+            examId: state.examId,
+            dataKey: state.dataKey,
+            title: state.dataset?.meta?.title || document.title || state.reviewContext?.title || state.reviewContext?.examTitle || null,
+            examTitle: state.dataset?.meta?.title || document.title || state.reviewContext?.examTitle || null,
+            wrongReasons,
+            wrongReasonTargets: collectWrongReasonTargets(state.lastResults, wrongReasons),
+            updatedAt: new Date().toISOString()
+        };
+        logWrongReasonSave('info', 'sync:start', {
+            payload: summarizeWrongReasonPayload(payload)
+        });
+        const saveWithLegacyPaths = () => saveWrongReasonsDirectly(payload).then((handledDirectly) => {
+            if (handledDirectly) {
+                clearWrongReasonPending(getWrongReasonPayloadQuestionIds(payload));
+                setWrongReasonSaveButtonsForPayload(payload, 'saved');
+                logWrongReasonSave('info', 'sync:direct-saved', {
+                    payload: summarizeWrongReasonPayload(payload)
+                });
+                return true;
+            }
+            return saveWrongReasonsWithPracticeRecordApi(payload).then((handledByApi) => {
+                if (handledByApi) {
+                    clearWrongReasonPending(getWrongReasonPayloadQuestionIds(payload));
+                    setWrongReasonSaveButtonsForPayload(payload, 'saved');
+                    logWrongReasonSave('info', 'sync:api-saved', {
+                        payload: summarizeWrongReasonPayload(payload)
+                    });
+                    return true;
+                }
+                if (!saveWrongReasonsLocally(payload)) {
+                    postMessage('PRACTICE_WRONG_REASON_UPDATE', payload);
+                    setWrongReasonSaveButtonsForPayload(payload, 'failed');
+                    logWrongReasonSave('warn', 'sync:all-paths-failed', {
+                        payload: summarizeWrongReasonPayload(payload)
+                    });
+                    return false;
+                }
+                clearWrongReasonPending(getWrongReasonPayloadQuestionIds(payload));
+                setWrongReasonSaveButtonsForPayload(payload, 'saved');
+                logWrongReasonSave('info', 'sync:local-saved', {
+                    payload: summarizeWrongReasonPayload(payload)
+                });
+                return true;
+            });
+        });
+
+        return saveWithLegacyPaths();
+    }
+
+    function buildWrongReasonControls(entry = {}) {
+        if (entry.isCorrect) {
+            return '<span class="wrong-reason-placeholder">-</span>';
+        }
+        const reason = getWrongReasonForEntry(entry) || {};
+        const questionId = escapeHtml(String(entry.questionId || ''));
+        const selectedCategory = String(reason.category || '');
+        const note = escapeHtml(String(reason.note || ''));
+        const options = WRONG_REASON_OPTIONS.map((option) => {
+            const selected = option.value === selectedCategory ? ' selected' : '';
+            return `<option value="${escapeHtml(option.value)}"${selected}>${escapeHtml(option.label)}</option>`;
+        }).join('');
+        return `
+            <div class="wrong-reason-controls" data-question-id="${questionId}">
+                <select class="wrong-reason-select" data-question-id="${questionId}" aria-label="错因分类">
+                    ${options}
+                </select>
+                <textarea class="wrong-reason-note" data-question-id="${questionId}" rows="2" placeholder="补充错因">${note}</textarea>
+                <button class="wrong-reason-save" data-question-id="${questionId}" type="button">保存</button>
+            </div>
+        `;
+    }
+
+    function handleWrongReasonInput(event) {
+        const target = event.target;
+        if (!target || !target.classList) {
+            return;
+        }
+        if (!target.classList.contains('wrong-reason-select') && !target.classList.contains('wrong-reason-note')) {
+            return;
+        }
+        const questionId = target.dataset.questionId;
+        const container = target.closest('.wrong-reason-controls');
+        const category = container?.querySelector('.wrong-reason-select')?.value || '';
+        const note = container?.querySelector('.wrong-reason-note')?.value || '';
+        updateWrongReasonInResults(questionId, { category, note });
+        syncWrongReasonControls(questionId, { category, note }, container);
+        setWrongReasonSaveButtons(questionId, 'draft');
+    }
+
+    function handleWrongReasonSave(event) {
+        const button = event.target?.closest?.('.wrong-reason-save');
+        if (!button) {
+            return;
+        }
+        const container = button.closest('.wrong-reason-controls');
+        const questionId = button.dataset.questionId || container?.dataset.questionId || '';
+        const category = container?.querySelector('.wrong-reason-select')?.value || '';
+        const note = container?.querySelector('.wrong-reason-note')?.value || '';
+        updateWrongReasonInResults(questionId, { category, note });
+        syncWrongReasonControls(questionId, { category, note }, container);
+        setWrongReasonSaveButtons(questionId, 'saving');
+        Promise.resolve(syncWrongReasonsNow()).then((saved) => {
+            setWrongReasonSaveButtons(questionId, saved ? 'saved' : 'failed');
+        }).catch(() => {
+            setWrongReasonSaveButtons(questionId, 'failed');
+        });
+    }
+
     function renderResults(results) {
         if (!dom.results) return;
+        ensureWrongReasonStyles();
         const rows = Object.values(results.answerComparison).map((entry) => {
             const label = escapeHtml(displayLabel(entry.questionId));
             const userAnswer = escapeHtml(displayAnswerValue(entry.userAnswer));
             const correctAnswer = escapeHtml(displayAnswerValue(entry.correctAnswer, ''));
             const status = entry.isCorrect ? '✓' : '✗';
+            const wrongReason = buildWrongReasonControls(entry);
+            const questionCell = entry.isCorrect
+                ? label
+                : `<button class="result-question-jump" type="button" data-question-id="${escapeHtml(String(entry.questionId || ''))}">${label}</button>`;
             return `
                 <tr>
-                    <td>${label}</td>
-                    <td>${userAnswer}</td>
+                    <td>${questionCell}</td>
+                    <td class="${entry.isCorrect ? '' : 'result-answer-wrong'}">${userAnswer}</td>
                     <td>${correctAnswer || ''}</td>
                     <td class="${entry.isCorrect ? 'result-correct' : 'result-incorrect'}">${status}</td>
+                    <td class="wrong-reason-cell">${wrongReason}</td>
                 </tr>
             `;
         }).join('');
         dom.results.innerHTML = `
             <h4>答题结果</h4>
             <p>得分 ${results.scoreInfo.correct} / ${results.scoreInfo.totalQuestions} · ${results.scoreInfo.percentage}%</p>
+            ${buildResultMetaTags()}
             <table class="results-table">
                 <thead>
                     <tr>
@@ -5685,12 +7256,19 @@
                         <th>你的答案</th>
                         <th>正确答案</th>
                         <th>结果</th>
+                        <th>错因</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
             </table>
         `;
         dom.results.style.display = 'block';
+        attachWrongReasonControlEvents(dom.results);
+        dom.results.querySelectorAll('.result-question-jump').forEach((button) => {
+            button.addEventListener('click', () => {
+                scrollToQuestion(button.dataset.questionId || '');
+            });
+        });
     }
 
     function escapeSelector(value) {
@@ -5704,42 +7282,165 @@
         return String(value).replace(/["\\]/g, '\\$&');
     }
 
-    function normalizeReplayQuestionId(rawValue) {
-        if (rawValue == null) return '';
-        const raw = String(rawValue).trim();
-        if (!raw) return '';
-        const splitIndex = raw.lastIndexOf('::');
-        const value = splitIndex >= 0 ? raw.slice(splitIndex + 2) : raw;
-        const direct = normalizeQuestionId(value);
-        if (direct) return direct;
-        const digits = value.match(/(\d+)/);
-        return digits ? `q${digits[1]}` : value.toLowerCase();
+    function normalizeReplayExamId(value) {
+        return String(value || '').trim().toLowerCase();
     }
 
-    function normalizeReplayMap(rawMap = {}) {
+    function getReplayTargetExamId(entry = {}) {
+        let urlExamId = '';
+        try {
+            const params = new URLSearchParams(global.location?.search || '');
+            urlExamId = params.get('examId') || params.get('dataKey') || '';
+        } catch (_) {
+            urlExamId = '';
+        }
+        const stateExamId = state.examId || state.dataKey || urlExamId || '';
+        const entryExamId = entry?.examId || entry?.dataKey || entry?.metadata?.examId || entry?.metadata?.dataKey || '';
+        const candidate = stateExamId || entryExamId;
+        if (candidate && !String(candidate).startsWith('suite-')) {
+            return String(candidate).trim();
+        }
+        return '';
+    }
+
+    function splitReplayQuestionId(rawValue) {
+        if (rawValue == null) return { examPrefix: '', questionId: '' };
+        const raw = String(rawValue).trim();
+        if (!raw) return { examPrefix: '', questionId: '' };
+        const splitIndex = raw.lastIndexOf('::');
+        const examPrefix = splitIndex >= 0 ? raw.slice(0, splitIndex).trim() : '';
+        const value = splitIndex >= 0 ? raw.slice(splitIndex + 2) : raw;
+        const direct = normalizeQuestionId(value);
+        if (direct) return { examPrefix, questionId: direct };
+        const digits = value.match(/(\d+)/);
+        return {
+            examPrefix,
+            questionId: digits ? `q${digits[1]}` : value.toLowerCase()
+        };
+    }
+
+    function normalizeReplayQuestionId(rawValue, targetExamId = '') {
+        const split = splitReplayQuestionId(rawValue);
+        if (!split.questionId) return '';
+        if (
+            split.examPrefix
+            && targetExamId
+            && normalizeReplayExamId(split.examPrefix) !== normalizeReplayExamId(targetExamId)
+        ) {
+            return '';
+        }
+        return split.questionId;
+    }
+
+    function normalizeReplayMap(rawMap = {}, options = {}) {
         const normalized = {};
+        if (Array.isArray(rawMap)) {
+            const targetExamId = options && options.targetExamId ? String(options.targetExamId).trim() : '';
+            rawMap.forEach((entry) => {
+                if (!entry || typeof entry !== 'object') {
+                    return;
+                }
+                const split = splitReplayQuestionId(entry.questionId || entry.id || entry.key || '');
+                if (!split.questionId) {
+                    return;
+                }
+                if (
+                    split.examPrefix
+                    && targetExamId
+                    && normalizeReplayExamId(split.examPrefix) !== normalizeReplayExamId(targetExamId)
+                ) {
+                    return;
+                }
+                const value = Object.prototype.hasOwnProperty.call(entry, 'answer')
+                    ? entry.answer
+                    : (Object.prototype.hasOwnProperty.call(entry, 'userAnswer') ? entry.userAnswer : entry.user);
+                normalized[split.questionId] = value;
+            });
+            return normalized;
+        }
         if (!rawMap || typeof rawMap !== 'object') {
             return normalized;
         }
+        const targetExamId = options && options.targetExamId ? String(options.targetExamId).trim() : '';
+        const allowUnprefixed = options?.allowUnprefixed !== false;
         Object.entries(rawMap).forEach(([key, value]) => {
-            const normalizedKey = normalizeReplayQuestionId(key);
+            const split = splitReplayQuestionId(key);
+            if (split.examPrefix) {
+                if (
+                    targetExamId
+                    && normalizeReplayExamId(split.examPrefix) !== normalizeReplayExamId(targetExamId)
+                ) {
+                    return;
+                }
+            } else if (!allowUnprefixed) {
+                return;
+            }
+            const normalizedKey = split.questionId;
             if (!normalizedKey) return;
             normalized[normalizedKey] = value;
         });
         return normalized;
     }
 
+    function mergeReplayMapsFirstWins(...sources) {
+        const merged = {};
+        sources.forEach((source) => {
+            Object.entries(source || {}).forEach(([questionId, value]) => {
+                if (!Object.prototype.hasOwnProperty.call(merged, questionId)) {
+                    merged[questionId] = value;
+                }
+            });
+        });
+        return merged;
+    }
+
+    function readReplayEntryAnswer(entry = {}, fieldNames = []) {
+        for (const field of fieldNames) {
+            if (Object.prototype.hasOwnProperty.call(entry, field)) {
+                return entry[field];
+            }
+        }
+        return undefined;
+    }
+
     function buildReplayResults(entry = {}) {
-        const normalizedAnswers = normalizeReplayMap(entry.answers || {});
-        const normalizedCorrectAnswers = normalizeReplayMap(entry.correctAnswerMap || (entry.realData && entry.realData.correctAnswerMap) || {});
+        const replayTargetExamId = getReplayTargetExamId(entry);
+        const replayMapOptions = {
+            targetExamId: replayTargetExamId,
+            allowUnprefixed: true
+        };
+        const normalizedAnswers = normalizeReplayMap(entry.answers || {}, replayMapOptions);
+        const normalizedCorrectAnswers = normalizeReplayMap(
+            entry.correctAnswerMap || (entry.realData && entry.realData.correctAnswerMap) || {},
+            replayMapOptions
+        );
         const normalizedComparison = {};
-        const rawComparison = normalizeReplayMap(entry.answerComparison || {});
+        const rawDetailComparison = mergeReplayMapsFirstWins(
+            normalizeReplayMap(entry.answerDetails || {}, replayMapOptions),
+            normalizeReplayMap(entry.realData && entry.realData.answerDetails || {}, replayMapOptions),
+            normalizeReplayMap(entry.rawData && entry.rawData.answerDetails || {}, replayMapOptions),
+            normalizeReplayMap(entry.scoreInfo && entry.scoreInfo.details || {}, replayMapOptions),
+            normalizeReplayMap(entry.realData && entry.realData.scoreInfo && entry.realData.scoreInfo.details || {}, replayMapOptions),
+            normalizeReplayMap(entry.rawData && entry.rawData.scoreInfo && entry.rawData.scoreInfo.details || {}, replayMapOptions)
+        );
+        const rawFallbackComparison = mergeReplayMapsFirstWins(
+            normalizeReplayMap(entry.answerComparison || {}, replayMapOptions),
+            normalizeReplayMap(entry.realData && entry.realData.answerComparison || {}, replayMapOptions),
+            normalizeReplayMap(entry.rawData && entry.rawData.answerComparison || {}, replayMapOptions)
+        );
+        const rawComparison = mergeReplayMapsFirstWins(rawDetailComparison, rawFallbackComparison);
+        const normalizedWrongReasons = mergeReplayMapsFirstWins(
+            normalizeReplayMap(entry.wrongReasons || {}, replayMapOptions),
+            normalizeReplayMap(entry.realData && entry.realData.wrongReasons || {}, replayMapOptions),
+            normalizeReplayMap(entry.rawData && entry.rawData.wrongReasons || {}, replayMapOptions)
+        );
         const questionIds = new Set([
             ...Object.keys(normalizedAnswers),
             ...Object.keys(normalizedCorrectAnswers),
             ...Object.keys(rawComparison),
+            ...Object.keys(normalizedWrongReasons),
             ...(Array.isArray(entry.allQuestionIds)
-                ? entry.allQuestionIds.map((item) => normalizeReplayQuestionId(item)).filter(Boolean)
+                ? entry.allQuestionIds.map((item) => normalizeReplayQuestionId(item, replayTargetExamId)).filter(Boolean)
                 : [])
         ]);
 
@@ -5749,31 +7450,52 @@
             const comparisonEntry = (rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry))
                 ? rawEntry
                 : {};
-            const userAnswer = Object.prototype.hasOwnProperty.call(comparisonEntry, 'userAnswer')
-                ? comparisonEntry.userAnswer
+            const userAnswer = readReplayEntryAnswer(comparisonEntry, ['userAnswer', 'answer', 'user']) !== undefined
+                ? readReplayEntryAnswer(comparisonEntry, ['userAnswer', 'answer', 'user'])
                 : (Object.prototype.hasOwnProperty.call(normalizedAnswers, questionId) ? normalizedAnswers[questionId] : '');
             const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(normalizedCorrectAnswers, questionId);
             const correctAnswer = hasCanonicalCorrectAnswer ? normalizedCorrectAnswers[questionId] : '';
-            let isCorrect = hasCanonicalCorrectAnswer ? compareAnswers(userAnswer, correctAnswer) : null;
+            const fromDetail = Object.prototype.hasOwnProperty.call(rawDetailComparison, questionId);
+            let isCorrect = fromDetail && typeof comparisonEntry.isCorrect === 'boolean'
+                ? comparisonEntry.isCorrect
+                : (hasCanonicalCorrectAnswer ? compareAnswers(userAnswer, correctAnswer) : null);
             if (isCorrect) {
                 correctCount += 1;
             }
-            normalizedComparison[questionId] = {
+            const wrongReason = comparisonEntry.wrongReason
+                || comparisonEntry.wrongReasonNote
+                || comparisonEntry.errorReason
+                || normalizedWrongReasons[questionId]
+                || null;
+            normalizedComparison[questionId] = Object.assign({}, comparisonEntry, {
                 questionId,
                 userAnswer,
                 correctAnswer,
-                isCorrect
-            };
+                isCorrect,
+                wrongReason: wrongReason || null
+            });
         });
 
         const totalQuestions = questionIds.size;
         const scoreInfo = Object.assign({}, entry.scoreInfo || {});
+        const preserveHistoricalScore = scoreInfo.preserveHistoricalScore === true;
         const hasCanonicalCorrectAnswers = Object.keys(normalizedCorrectAnswers).length > 0;
-        scoreInfo.correct = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.correct)) ? correctCount : Number(scoreInfo.correct);
-        scoreInfo.total = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.total)) ? totalQuestions : Number(scoreInfo.total);
-        scoreInfo.totalQuestions = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.totalQuestions)) ? scoreInfo.total : Number(scoreInfo.totalQuestions);
-        scoreInfo.accuracy = scoreInfo.totalQuestions > 0 ? scoreInfo.correct / scoreInfo.totalQuestions : 0;
-        scoreInfo.percentage = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.percentage))
+        scoreInfo.correct = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.correct))) ? correctCount : Number(scoreInfo.correct);
+        scoreInfo.total = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.total))) ? totalQuestions : Number(scoreInfo.total);
+        scoreInfo.totalQuestions = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.totalQuestions))) ? scoreInfo.total : Number(scoreInfo.totalQuestions);
+        if (!Number.isFinite(Number(scoreInfo.correct))) {
+            scoreInfo.correct = correctCount;
+        }
+        if (!Number.isFinite(Number(scoreInfo.total))) {
+            scoreInfo.total = totalQuestions;
+        }
+        if (!Number.isFinite(Number(scoreInfo.totalQuestions))) {
+            scoreInfo.totalQuestions = scoreInfo.total;
+        }
+        scoreInfo.accuracy = preserveHistoricalScore && Number.isFinite(Number(scoreInfo.accuracy))
+            ? Number(scoreInfo.accuracy)
+            : (scoreInfo.totalQuestions > 0 ? scoreInfo.correct / scoreInfo.totalQuestions : 0);
+        scoreInfo.percentage = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.percentage)))
             ? Math.round(scoreInfo.accuracy * 100)
             : Number(scoreInfo.percentage);
         scoreInfo.percentage = Number.isFinite(Number(scoreInfo.percentage))
@@ -5875,6 +7597,10 @@
         const controls = document.querySelectorAll('input, textarea, select');
         controls.forEach((control) => {
             if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) {
+                if (isWrongReasonControl(control)) {
+                    control.disabled = false;
+                    return;
+                }
                 control.disabled = state.readOnly || state.timerLocked;
             }
         });
@@ -5924,8 +7650,38 @@
                 handleIncoming,
                 initializeInlineSimulationSuite,
                 buildResultsFromAnswers,
+                collectWrongReasonMap,
+                updateWrongReasonInResults,
+                syncWrongReasonsNow,
+                renderInlineWrongReasonControls,
+                markWrongAnswerChoice,
+                insertInlineWrongReasonControls,
+                hasPendingWrongReasonSaves,
+                handleWrongReasonBeforeUnload,
+                saveWrongReasonsDirectly,
+                saveWrongReasonsWithSqliteBackend,
+                saveWrongReasonsWithPracticeRecordApi,
+                saveWrongReasonsLocally,
+                getAnswerControls,
                 renderTimer,
                 handleSubmit,
+                setWrongReasonTestState(patch = {}) {
+                    if (Object.prototype.hasOwnProperty.call(patch, 'examId')) state.examId = patch.examId;
+                    if (Object.prototype.hasOwnProperty.call(patch, 'dataKey')) state.dataKey = patch.dataKey;
+                    if (Object.prototype.hasOwnProperty.call(patch, 'sessionId')) state.sessionId = patch.sessionId;
+                    if (Object.prototype.hasOwnProperty.call(patch, 'suiteSessionId')) state.suiteSessionId = patch.suiteSessionId;
+                    if (Object.prototype.hasOwnProperty.call(patch, 'lastResults')) state.lastResults = patch.lastResults;
+                    if (Object.prototype.hasOwnProperty.call(patch, 'dataset')) state.dataset = patch.dataset;
+                    if (Array.isArray(patch.touchedIds)) state.wrongReasonTouchedIds = new Set(patch.touchedIds);
+                    if (Array.isArray(patch.pendingIds)) state.wrongReasonPendingSaveIds = new Set(patch.pendingIds);
+                },
+                getWrongReasonSaveState() {
+                    return {
+                        touchedIds: Array.from(state.wrongReasonTouchedIds),
+                        pendingIds: Array.from(state.wrongReasonPendingSaveIds),
+                        hasPending: hasPendingWrongReasonSaves()
+                    };
+                },
                 getTestState() {
                     return {
                         examId: state.examId,
@@ -6200,6 +7956,9 @@
         }
         state.reviewContext = data;
         state.suiteReviewMode = Boolean(data.suiteReviewMode);
+        if (data.suiteSessionId) {
+            state.suiteSessionId = data.suiteSessionId;
+        }
         const viewMode = data.viewMode === 'answering' ? 'answering' : 'review';
         state.reviewViewMode = viewMode;
         if (data.reviewSessionId) {
@@ -6237,6 +7996,18 @@
     }
 
     async function applyReplayRecord(data = {}) {
+        const replayContext = {};
+        ['recordId', 'practiceRecordId', 'sessionId', 'reviewSessionId', 'suiteSessionId'].forEach((key) => {
+            if (data[key]) {
+                replayContext[key] = data[key];
+            }
+        });
+        if (Object.keys(replayContext).length > 0) {
+            state.reviewContext = Object.assign({}, state.reviewContext || {}, replayContext);
+            if (replayContext.suiteSessionId) {
+                state.suiteSessionId = replayContext.suiteSessionId;
+            }
+        }
         const entry = data.entry && typeof data.entry === 'object' ? data.entry : data;
         const entryExamId = entry && entry.examId != null ? String(entry.examId).trim() : '';
         const currentExamId = state.examId != null ? String(state.examId).trim() : '';
@@ -6254,6 +8025,9 @@
         if (data.reviewSessionId) {
             state.reviewSessionId = data.reviewSessionId;
         }
+        if (data.suiteSessionId) {
+            state.suiteSessionId = data.suiteSessionId;
+        }
         if (Number.isInteger(data.reviewEntryIndex)) {
             state.reviewEntryIndex = data.reviewEntryIndex;
         }
@@ -6269,6 +8043,7 @@
         state.lastResults = replayResults;
         renderResults(replayResults);
         await renderExplanations();
+        renderInlineWrongReasonControls(replayResults);
         applyHighlights(replayHighlights);
         enhanceReviewHighlights();
         updateNavStatuses(replayResults);
@@ -7075,6 +8850,7 @@
             suiteEntries: Array.isArray(submissionSnapshot.suiteEntries) ? submissionSnapshot.suiteEntries : []
         } : {}, postedResults));
         await renderExplanations();
+        renderInlineWrongReasonControls(results);
         applyHighlights(highlightSnapshot);
         enhanceReviewHighlights();
         updateNavStatuses(results);
@@ -7558,6 +9334,7 @@
         attachActionListeners();
         attachMessageBridge();
         attachPracticeTimerBridge();
+        installWrongReasonBeforeUnloadGuard();
         syncSuiteModeState();
         setExitButtonVisible(false);
         if (state.memorizeMode) {

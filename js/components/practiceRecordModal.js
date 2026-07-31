@@ -138,9 +138,9 @@ class PracticeRecordModal {
                     return;
                 }
 
-                closeModal();
                 try {
                     await window.app.openPracticeRecordReplay(replayRecord);
+                    closeModal();
                 } catch (error) {
                     console.error('[PracticeRecordModal] 启动回放失败:', error);
                     if (typeof window.showMessage === 'function') {
@@ -171,15 +171,20 @@ class PracticeRecordModal {
         const category = record.category || metadata.category || '\u672a\u77e5\u5206\u7c7b';
         const frequencyLabel = this.getFrequencyLabel(record);
         const startTimestamp = record.startTime || record.date;
-        const formattedStart = this.formatDate(startTimestamp);
+        const formattedStart = this.isDateOnlyRecord(record)
+            ? this.formatDateOnly(startTimestamp)
+            : this.formatDate(startTimestamp);
         const durationSeconds = this.resolveDuration(record);
-        const formattedDuration = this.formatDuration(durationSeconds);
+        const formattedDuration = this.isDateOnlyRecord(record) && !(Number.isFinite(durationSeconds) && durationSeconds > 0)
+            ? '\u672a\u8bb0\u5f55'
+            : this.formatDuration(durationSeconds);
         const score = this.resolveScore(record);
         const accuracy = this.resolveAccuracy(record);
         const accuracyPercent = accuracy != null ? Math.round(accuracy * 100) : null;
         const summaryCounts = this.getEntriesSummary(this.collectAllEntries(record));
         const incorrectCount = summaryCounts.incorrect || 0;
         const unansweredCount = summaryCounts.unanswered || 0;
+        const wrongReasonSummary = this.getWrongReasonSummary(record);
 
         // 多套题模式的额外信息
         let multiSuiteInfo = '';
@@ -235,6 +240,10 @@ class PracticeRecordModal {
                                     <span class="meta-label">\u672a\u4f5c\u7b54\uff1a</span>
                                     <span class="meta-value unanswered-count">${unansweredCount}</span>
                                 </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">已标错因：</span>
+                                    <span class="meta-value wrong-reason-count">${wrongReasonSummary.tagged}/${wrongReasonSummary.incorrect}</span>
+                                </div>
                                 ${multiSuiteInfo}
                             </div>
                         </div>
@@ -277,6 +286,9 @@ class PracticeRecordModal {
     }
 
     resolveDuration(record) {
+        if (this.isDateOnlyRecord(record) && !(Number.isFinite(Number(record.duration)) && Number(record.duration) > 0)) {
+            return null;
+        }
         if (typeof record.duration === 'number') {
             return record.duration;
         }
@@ -337,6 +349,22 @@ class PracticeRecordModal {
             console.warn('[PracticeRecordModal] \u65e5\u671f\u683c\u5f0f\u5316\u5931\u8d25:', error);
         }
         return '\u672a\u77e5';
+    }
+
+    isDateOnlyRecord(record) {
+        return !!record && (
+            record.source === 'markdown-recovery'
+            || record.timePrecision === 'date-only'
+            || !!record.recoveredFrom
+        );
+    }
+
+    formatDateOnly(value) {
+        if (!value) {
+            return '\u672a\u77e5';
+        }
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? '\u672a\u77e5' : parsed.toLocaleDateString();
     }
 
     formatDuration(seconds) {
@@ -419,7 +447,7 @@ class PracticeRecordModal {
                     let content = '';
 
                     if (this.hasNormalizedEntries(normalizedEntries)) {
-                        content = this.renderAnswersSection(normalizedEntries, { wrap: false });
+                        content = this.renderAnswersSection(normalizedEntries, { wrap: false, record: entryRecord });
                     } else {
                         content = this.generateLegacyAnswerTableForSingle(entryRecord);
                     }
@@ -448,7 +476,7 @@ class PracticeRecordModal {
 
         const normalizedEntries = this.getNormalizedEntries(preparedRecord);
         if (this.hasNormalizedEntries(normalizedEntries)) {
-            return this.renderAnswersSection(normalizedEntries, { wrap: true });
+            return this.renderAnswersSection(normalizedEntries, { wrap: true, record: preparedRecord });
         }
 
         return this.generateLegacyAnswerTableForSingle(preparedRecord);
@@ -522,13 +550,95 @@ class PracticeRecordModal {
         return { total, correct, incorrect, unanswered };
     }
 
+    formatWrongReason(reason) {
+        if (!reason) {
+            return '';
+        }
+        if (typeof reason === 'string') {
+            return reason.trim();
+        }
+        if (typeof reason === 'object') {
+            const category = typeof reason.category === 'string' ? reason.category.trim() : '';
+            const note = typeof reason.note === 'string' ? reason.note.trim() : '';
+            return [category, note].filter(Boolean).join('：');
+        }
+        return String(reason).trim();
+    }
+
+    getWrongReasonFromRecord(record, key, entry = {}) {
+        const map = record && record.wrongReasons && typeof record.wrongReasons === 'object'
+            ? record.wrongReasons
+            : {};
+        const displayNumber = entry.displayNumber || entry.questionNumber || entry.questionLabel || entry.number;
+        const candidates = [
+            entry.wrongReason,
+            entry.errorReason,
+            entry.wrongReasonNote,
+            map[key],
+            displayNumber != null ? map[`q${displayNumber}`] : null,
+            displayNumber != null ? map[String(displayNumber)] : null
+        ];
+        for (const candidate of candidates) {
+            const formatted = this.formatWrongReason(candidate);
+            if (formatted) {
+                return formatted;
+            }
+        }
+        return '';
+    }
+
+    getWrongReasonSummary(record) {
+        const entries = this.collectAllEntries(record);
+        const summary = { incorrect: 0, tagged: 0 };
+        if (Array.isArray(entries) && entries.length > 0) {
+            entries.forEach((entry) => {
+                if (entry && entry.isCorrect === false) {
+                    summary.incorrect += 1;
+                    const key = entry.questionId || entry.canonicalKey || entry.key || (entry.displayNumber ? `q${entry.displayNumber}` : '');
+                    if (
+                        this.formatWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote)
+                        || this.getWrongReasonFromRecord(record, key, entry)
+                    ) {
+                        summary.tagged += 1;
+                    }
+                }
+            });
+            return summary;
+        }
+
+        const maps = [
+            record && record.answerComparison,
+            record && record.answerDetails,
+            record && record.scoreInfo && record.scoreInfo.details,
+            record && record.realData && record.realData.answerComparison,
+            record && record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details
+        ].filter(map => map && typeof map === 'object');
+        const seen = new Set();
+        maps.forEach((map) => {
+            Object.entries(map).forEach(([key, entry]) => {
+                if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                    return;
+                }
+                seen.add(key);
+                summary.incorrect += 1;
+                if (this.getWrongReasonFromRecord(record, key, entry)) {
+                    summary.tagged += 1;
+                }
+            });
+        });
+        if (summary.incorrect === 0 && record && record.wrongReasons && typeof record.wrongReasons === 'object') {
+            summary.tagged = Object.values(record.wrongReasons).filter(reason => this.formatWrongReason(reason)).length;
+        }
+        return summary;
+    }
+
     renderAnswersSection(entries, options = {}) {
         const normalizedEntries = Array.isArray(entries) ? entries : [];
         if (normalizedEntries.length === 0) {
             return '<div class="no-answers-message"><p>\u6682\u65e0\u7b54\u9898\u6570\u636e</p></div>';
         }
 
-        const tableHtml = this.renderEntriesTable(normalizedEntries);
+        const tableHtml = this.renderEntriesTable(normalizedEntries, options.record || null);
 
         if (options.wrap === false) {
             return tableHtml;
@@ -545,7 +655,7 @@ class PracticeRecordModal {
         return '';
     }
 
-    renderEntriesTable(entries) {
+    renderEntriesTable(entries, record = null) {
         if (!Array.isArray(entries) || entries.length === 0) {
             return '<div class="answers-table-container"><p class="no-details">\u6682\u65e0\u7b54\u9898\u6570\u636e</p></div>';
         }
@@ -555,6 +665,14 @@ class PracticeRecordModal {
                 const questionLabel = this.escapeHtml(entry.displayNumber || '');
                 const userDisplay = this.escapeHtml(entry.userAnswer || '\u672a\u4f5c\u7b54');
                 const correctDisplay = this.escapeHtml(entry.correctAnswer || '\u65e0');
+                const questionKey = entry.questionId || entry.canonicalKey || entry.key || (entry.displayNumber ? `q${entry.displayNumber}` : '');
+                const wrongReasonDisplay = entry.isCorrect === false
+                    ? this.escapeHtml(
+                        this.formatWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote)
+                        || this.getWrongReasonFromRecord(record, questionKey, entry)
+                        || '未标注'
+                    )
+                    : '';
 
                 let resultIcon = '\u2753';
                 let resultClass = 'unknown';
@@ -573,6 +691,7 @@ class PracticeRecordModal {
                         <td class="correct-answer">${correctDisplay}</td>
                         <td class="user-answer">${userDisplay}</td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${wrongReasonDisplay}</td>
                     </tr>
                 `;
             })
@@ -587,6 +706,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -624,6 +744,9 @@ class PracticeRecordModal {
                 const resultIcon = isCorrect ? '&#10003;' : '&#10005;';
                 const safeUser = userAnswer != null ? this.truncateAnswer(userAnswer) : '\u672a\u4f5c\u7b54';
                 const safeCorrect = correctAnswer != null ? this.truncateAnswer(correctAnswer) : '\u65e0';
+                const wrongReasonDisplay = !isCorrect
+                    ? (this.getWrongReasonFromRecord(record, `q${questionNumber}`, { questionLabel: questionNumber }) || '未标注')
+                    : '';
 
                 return `
                     <tr class="answer-row ${resultClass}">
@@ -635,6 +758,7 @@ class PracticeRecordModal {
                             ${this.escapeHtml(safeUser)}
                         </td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${this.escapeHtml(wrongReasonDisplay)}</td>
                     </tr>
                 `;
             })
@@ -649,6 +773,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -751,7 +876,8 @@ class PracticeRecordModal {
                     questionLabel,
                     userAnswer: hasUserAnswer ? normalizedUser : '',
                     correctAnswer: hasCorrectAnswer ? normalizedCorrect : '',
-                    isCorrect: typeof comparison.isCorrect === 'boolean' ? comparison.isCorrect : null
+                    isCorrect: typeof comparison.isCorrect === 'boolean' ? comparison.isCorrect : null,
+                    wrongReason: comparison.wrongReason || comparison.errorReason || comparison.wrongReasonNote || null
                 };
             })
             .filter(Boolean);
@@ -773,6 +899,9 @@ class PracticeRecordModal {
                 const correctDisplay = entry.correctAnswer
                     ? this.truncateAnswer(entry.correctAnswer)
                     : '\u65e0';
+                const wrongReasonDisplay = resultFlag === false
+                    ? (this.formatWrongReason(entry.wrongReason) || '未标注')
+                    : '';
 
                 return `
                     <tr class="answer-row ${resultClass}">
@@ -784,6 +913,7 @@ class PracticeRecordModal {
                             ${this.escapeHtml(userDisplay)}
                         </td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${this.escapeHtml(wrongReasonDisplay)}</td>
                     </tr>
                 `;
             })
@@ -798,6 +928,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -867,8 +998,17 @@ class PracticeRecordModal {
     mergeComparisonWithCorrections(record) {
         const comparison = JSON.parse(JSON.stringify(record.answerComparison || {}));
         const canonicalMap = this.getCanonicalCorrectAnswerMap(record);
+        const detailSources = [
+            record && record.answerDetails,
+            record && record.realData && record.realData.answerDetails,
+            record && record.rawData && record.rawData.answerDetails,
+            record && record.scoreInfo && record.scoreInfo.details,
+            record && record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details,
+            record && record.rawData && record.rawData.scoreInfo && record.rawData.scoreInfo.details
+        ].filter(source => source && typeof source === 'object' && !Array.isArray(source));
         const sources = [
             canonicalMap,
+            ...detailSources.map((details) => Object.fromEntries(Object.entries(details).map(([key, detail]) => [key, detail && detail.correctAnswer]))),
             (record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details)
                 ? Object.fromEntries(Object.entries(record.realData.scoreInfo.details).map(([key, detail]) => [key, detail && detail.correctAnswer]))
                 : null,
@@ -886,8 +1026,32 @@ class PracticeRecordModal {
             return null;
         };
 
+        const getDetail = (key) => {
+            for (const source of detailSources) {
+                if (source && source[key] && typeof source[key] === 'object') {
+                    return source[key];
+                }
+            }
+            return null;
+        };
+
         Object.keys(comparison).forEach((key) => {
             const item = comparison[key] || {};
+            const detail = getDetail(key);
+            if (detail) {
+                if (detail.userAnswer != null || detail.answer != null || detail.user != null) {
+                    item.userAnswer = detail.userAnswer ?? detail.answer ?? detail.user;
+                }
+                if (detail.correctAnswer != null || detail.correct != null) {
+                    item.correctAnswer = detail.correctAnswer ?? detail.correct;
+                }
+                if (typeof detail.isCorrect === 'boolean') {
+                    item.isCorrect = detail.isCorrect;
+                }
+                if (detail.wrongReason || detail.wrongReasonNote || detail.errorReason) {
+                    item.wrongReason = detail.wrongReason || detail.wrongReasonNote || detail.errorReason;
+                }
+            }
             const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(canonicalMap, key);
             if (hasCanonicalCorrectAnswer) {
                 const fixed = getFromSources(key);

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>恢复练习记录</title>
+    <style>
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; color: #111827; }
+        .box { max-width: 760px; border: 1px solid #d1d5db; border-radius: 8px; padding: 24px; }
+        h1 { margin: 0 0 16px; font-size: 24px; }
+        #status { white-space: pre-wrap; line-height: 1.6; }
+        .ok { color: #047857; }
+        .err { color: #b91c1c; }
+        a { color: #1d4ed8; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>正在恢复练习记录</h1>
+        <div id="status">准备恢复...</div>
+    </div>
+
+    <script>
+        (function () {
+            var sourceFile = 'E:/chrome/ielts-practice-records-2026-07-21.md';
+            var specs = [
+                {
+                    id: 'recovered-md-2026-07-21-p2-low-the-gender-gap-in-new-zealand-s-high-school-examination-results-新西兰考试成绩的性别差异',
+                    title: 'P2-low-The gender gap in New Zealand’s high school examination results 新西兰考试成绩的性别差异',
+                    date: '2026-07-21',
+                    answers: [
+                        ['1', 'examination', 'pass rates', false],
+                        ['2', 'decade', 'decade', true],
+                        ['3', 'concerted campaign', 'Australia', false],
+                        ['4', 'A', 'C', false],
+                        ['5', 'A', 'B', false],
+                        ['6', 'D', 'D', true],
+                        ['7', 'C', 'E', false],
+                        ['8', 'H', 'H', true],
+                        ['9', 'E', 'E', true],
+                        ['10', 'G', 'G', true],
+                        ['11', 'D', 'C', false],
+                        ['12', 'F', 'F', true],
+                        ['13', 'B', 'B', true]
+                    ]
+                },
+                {
+                    id: 'recovered-md-2026-07-18-p1-low-the-nature-of-yawning-打哈欠的本质',
+                    title: 'P1-low-The nature of Yawning 打哈欠的本质',
+                    date: '2026-07-18',
+                    answers: [
+                        ['1', 'D', 'C', false],
+                        ['2', 'C', 'D', false],
+                        ['3', 'B', 'A', false],
+                        ['4', 'B', 'B', true],
+                        ['5', 'A', 'B', false],
+                        ['6', 'B', 'B', true],
+                        ['7', 'C', 'C', true],
+                        ['8', 'A', 'A', true],
+                        ['9', 'B', 'B', true],
+                        ['10', 'bonding', 'bonding', true],
+                        ['11', 'danger', 'danger', true],
+                        ['12', 'rest', 'rest', true],
+                        ['13', 'evolution', 'alert', false]
+                    ]
+                },
+                {
+                    id: 'recovered-md-2026-07-18-p1-low-carnivorous-plants-食虫植物',
+                    title: 'P1-low-Carnivorous plants 食虫植物',
+                    date: '2026-07-18',
+                    answers: [
+                        ['1', 'alarm', 'raindrops', false],
+                        ['2', 'stomach', 'stomach', true],
+                        ['3', 'pores', 'pores', true],
+                        ['4', 'vacuum', 'vacuum', true],
+                        ['5', 'frogs', 'frogs', true],
+                        ['6', 'TRUE', 'TRUE', true],
+                        ['7', 'TRUE', 'TRUE', true],
+                        ['8', 'FALSE', 'FALSE', true],
+                        ['9', 'NOT GIVEN', 'NOT GIVEN', true],
+                        ['10', 'FALSE', 'FALSE', true],
+                        ['11', 'NOT GIVEN', 'NOT GIVEN', true],
+                        ['12', 'NOT GIVEN', 'TRUE', false],
+                        ['13', 'TRUE', 'FALSE', false]
+                    ]
+                }
+            ];
+
+            function setStatus(text, className) {
+                var el = document.getElementById('status');
+                el.textContent = text;
+                el.className = className || '';
+            }
+
+            function buildRecord(spec) {
+                var answers = [];
+                var answerMap = {};
+                var correctMap = {};
+                var comparison = {};
+                spec.answers.forEach(function (row) {
+                    var qid = 'q' + row[0];
+                    var entry = {
+                        questionId: qid,
+                        question: row[0],
+                        answer: row[1],
+                        userAnswer: row[1],
+                        correctAnswer: row[2],
+                        isCorrect: row[3]
+                    };
+                    answers.push(entry);
+                    answerMap[qid] = row[1];
+                    correctMap[qid] = row[2];
+                    comparison[qid] = {
+                        questionId: qid,
+                        userAnswer: row[1],
+                        correctAnswer: row[2],
+                        isCorrect: row[3]
+                    };
+                });
+                var total = answers.length;
+                var correct = answers.filter(function (entry) { return entry.isCorrect; }).length;
+                var accuracy = total ? correct / total : 0;
+                var percentage = Math.round(accuracy * 100);
+                var localDateTime = spec.date + 'T12:00:00.000+08:00';
+                return {
+                    id: spec.id,
+                    examId: spec.title,
+                    title: spec.title,
+                    displayTitle: spec.title,
+                    type: 'reading',
+                    source: 'markdown-recovery',
+                    timePrecision: 'date-only',
+                    durationUnknown: true,
+                    duration: null,
+                    date: localDateTime,
+                    startTime: null,
+                    endTime: null,
+                    createdAt: localDateTime,
+                    updatedAt: '2026-07-21T20:00:00.000+08:00',
+                    recoveredFrom: sourceFile,
+                    answers: answers,
+                    totalQuestions: total,
+                    correctCount: correct,
+                    score: correct,
+                    correctAnswers: correct,
+                    accuracy: accuracy,
+                    percentage: percentage,
+                    answerComparison: comparison,
+                    correctAnswerMap: correctMap,
+                    wrongReasons: {},
+                    realData: {
+                        answers: answerMap,
+                        correctAnswers: correctMap,
+                        correctAnswerMap: correctMap,
+                        answerComparison: comparison,
+                        wrongReasons: {},
+                        scoreInfo: {
+                            total: total,
+                            totalQuestions: total,
+                            correct: correct,
+                            score: correct,
+                            accuracy: accuracy,
+                            percentage: percentage,
+                            details: comparison
+                        }
+                    }
+                };
+            }
+
+            function openDb() {
+                return new Promise(function (resolve, reject) {
+                    var request = indexedDB.open('ExamSystemDB', 2);
+                    request.onblocked = function () {
+                        reject(new Error('数据库升级被其它页面占用，请关闭其它 IELTS Atlas 页面后重试'));
+                    };
+                    request.onerror = function () {
+                        reject(request.error || new Error('IndexedDB 打开失败'));
+                    };
+                    request.onupgradeneeded = function () {
+                        var db = request.result;
+                        if (!db.objectStoreNames.contains('keyValueStore')) {
+                            var store = db.createObjectStore('keyValueStore', { keyPath: 'key' });
+                            store.createIndex('timestamp', 'timestamp', { unique: false });
+                        }
+                    };
+                    request.onsuccess = function () {
+                        resolve(request.result);
+                    };
+                });
+            }
+
+            function readValue(db, key) {
+                return new Promise(function (resolve, reject) {
+                    var tx = db.transaction(['keyValueStore'], 'readonly');
+                    var store = tx.objectStore('keyValueStore');
+                    var request = store.get(key);
+                    request.onerror = function () { reject(request.error); };
+                    request.onsuccess = function () { resolve(request.result ? request.result.value : null); };
+                });
+            }
+
+            function writeValue(db, key, value) {
+                return new Promise(function (resolve, reject) {
+                    var tx = db.transaction(['keyValueStore'], 'readwrite');
+                    var store = tx.objectStore('keyValueStore');
+                    var request = store.put({ key: key, value: value, timestamp: Date.now() });
+                    request.onerror = function () { reject(request.error); };
+                    request.onsuccess = function () { resolve(true); };
+                });
+            }
+
+            function parseRecords(raw) {
+                if (!raw) {
+                    return [];
+                }
+                try {
+                    var parsed = JSON.parse(raw);
+                    var data = parsed && Object.prototype.hasOwnProperty.call(parsed, 'data')
+                        ? parsed.data
+                        : parsed;
+                    return Array.isArray(data) ? data : [];
+                } catch (_) {
+                    return [];
+                }
+            }
+
+            function mergeRecords(existing, incoming) {
+                var merged = Array.isArray(existing) ? existing.slice() : [];
+                var indexById = new Map();
+                merged.forEach(function (record, index) {
+                    if (record && record.id) {
+                        indexById.set(String(record.id), index);
+                    }
+                });
+                var importedCount = 0;
+                var updatedCount = 0;
+                incoming.forEach(function (record) {
+                    var key = String(record.id);
+                    if (indexById.has(key)) {
+                        merged[indexById.get(key)] = Object.assign({}, merged[indexById.get(key)], record, {
+                            updatedAt: record.updatedAt || new Date().toISOString()
+                        });
+                        updatedCount += 1;
+                    } else {
+                        merged.push(record);
+                        indexById.set(key, merged.length - 1);
+                        importedCount += 1;
+                    }
+                });
+                merged.sort(function (a, b) {
+                    return new Date(b && (b.updatedAt || b.createdAt || b.date) || 0).getTime()
+                        - new Date(a && (a.updatedAt || a.createdAt || a.date) || 0).getTime();
+                });
+                return { records: merged, importedCount: importedCount, updatedCount: updatedCount };
+            }
+
+            function calculateStats(records) {
+                var list = Array.isArray(records) ? records : [];
+                var total = list.length;
+                var sumPercentage = 0;
+                var totalMinutes = 0;
+                list.forEach(function (record) {
+                    var pct = Number(record.percentage);
+                    if (!Number.isFinite(pct)) {
+                        pct = Number(record.accuracy || 0) * 100;
+                    }
+                    sumPercentage += pct;
+                    totalMinutes += Number(record.durationMinutes || record.timeSpent || 0);
+                });
+                return {
+                    totalPractices: total,
+                    totalRecords: total,
+                    averageScore: total ? Math.round((sumPercentage / total) * 10) / 10 : 0,
+                    averageAccuracy: total ? Math.round((sumPercentage / total) * 10) / 1000 : 0,
+                    totalStudyTime: totalMinutes,
+                    lastUpdated: new Date().toISOString()
+                };
+            }
+
+            async function verifyDb(db, expectedIds) {
+                var raw = await readValue(db, 'exam_system_practice_records');
+                var records = parseRecords(raw);
+                var idSet = new Set(records.map(function (record) { return record && record.id; }));
+                var found = expectedIds.filter(function (id) { return idSet.has(id); });
+                return { count: records.length, found: found.length };
+            }
+
+            async function restore() {
+                var db = null;
+                try {
+                    setStatus('正在初始化 Chrome 本地存储...');
+                    var records = specs.map(buildRecord);
+                    var expectedIds = records.map(function (record) { return record.id; });
+                    db = await openDb();
+                    var beforeRecords = parseRecords(await readValue(db, 'exam_system_practice_records'));
+                    setStatus('开始合并恢复 3 条记录...');
+                    var merged = mergeRecords(beforeRecords, records);
+                    var now = Date.now();
+                    await writeValue(db, 'exam_system_practice_records', JSON.stringify({
+                        data: merged.records,
+                        timestamp: now,
+                        version: '0.6.2-fix',
+                        compressed: false
+                    }));
+                    await writeValue(db, 'exam_system_user_stats', JSON.stringify({
+                        data: calculateStats(merged.records),
+                        timestamp: now,
+                        version: '0.6.2-fix',
+                        compressed: false
+                    }));
+                    try {
+                        localStorage.removeItem('practice_records');
+                        localStorage.removeItem('old_prefix_practice_records');
+                    } catch (_) { /* ignore */ }
+                    var verified = await verifyDb(db, expectedIds);
+                    if (verified.found !== expectedIds.length) {
+                        throw new Error('写入后验证失败，只找到 ' + verified.found + ' / ' + expectedIds.length + ' 条恢复记录');
+                    }
+                    setStatus(
+                        '恢复完成。\n' +
+                        '恢复前：' + beforeRecords.length + ' 条\n' +
+                        '恢复后：' + verified.count + ' 条\n' +
+                        '新增：' + merged.importedCount + ' 条，更新：' + merged.updatedCount + ' 条\n\n' +
+                        '现在打开练习记录页： http://localhost:8081/?view=practice',
+                        'ok'
+                    );
+                } catch (error) {
+                    setStatus('恢复失败：' + (error && error.message ? error.message : error), 'err');
+                    console.error(error);
+                } finally {
+                    try {
+                        if (db) {
+                            db.close();
+                        }
+                    } catch (_) { /* ignore */ }
+                }
+            }
+
+            restore();
+        })();
+    </script>
+</body>
+</html>

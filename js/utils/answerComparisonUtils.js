@@ -297,6 +297,60 @@
         return result;
     }
 
+    function extractFromAnswerList(answers, selector) {
+        if (!Array.isArray(answers)) {
+            return {};
+        }
+        const result = {};
+        answers.forEach(entry => {
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            const key = entry.questionId ?? entry.id ?? entry.key;
+            const strKey = key == null ? '' : String(key).trim();
+            if (!strKey) {
+                return;
+            }
+            const value = selector(entry);
+            if (value != null) {
+                result[strKey] = value;
+            }
+        });
+        return result;
+    }
+
+    function extractBooleanResultMap(source) {
+        if (!source || typeof source !== 'object') {
+            return {};
+        }
+        const result = {};
+        Object.keys(source).forEach(key => {
+            const entry = source[key];
+            if (entry && typeof entry === 'object' && typeof entry.isCorrect === 'boolean') {
+                result[key] = entry.isCorrect;
+            }
+        });
+        return result;
+    }
+
+    function extractWrongReasonMap(source) {
+        if (!source || typeof source !== 'object') {
+            return {};
+        }
+        const result = {};
+        Object.keys(source).forEach(key => {
+            const entry = source[key];
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            const reason = entry.wrongReason || entry.wrongReasonNote || entry.errorReason || null;
+            if (reason) {
+                result[key] = reason;
+            }
+        });
+        return result;
+    }
+
     function lookupAnswer(map, keyVariants) {
         for (const key of keyVariants) {
             if (key && map[key] != null) {
@@ -375,7 +429,10 @@
 
         const userDisplay = entry.hasUserAnswer ? entry.userAnswer : 'No Answer';
         const correctDisplay = entry.hasCorrectAnswer ? entry.correctAnswer : 'N/A';
-        const isCorrect = answersMatch(entry.userInfo, entry.correctInfo);
+        const matched = answersMatch(entry.userInfo, entry.correctInfo);
+        const isCorrect = typeof entry.storedIsCorrect === 'boolean'
+            ? entry.storedIsCorrect
+            : matched;
 
         return {
             canonicalKey: entry.canonicalKey,
@@ -386,7 +443,8 @@
             correctAnswer: correctDisplay,
             isCorrect,
             hasUserAnswer: entry.hasUserAnswer,
-            hasCorrectAnswer: entry.hasCorrectAnswer
+            hasCorrectAnswer: entry.hasCorrectAnswer,
+            wrongReason: entry.wrongReason || null
         };
     }
 
@@ -395,33 +453,65 @@
             return [];
         }
 
+        const detailSources = [
+            record.answerDetails,
+            record.realData && record.realData.answerDetails,
+            record.rawData && record.rawData.answerDetails,
+            record.scoreInfo && record.scoreInfo.details,
+            record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details,
+            record.rawData && record.rawData.scoreInfo && record.rawData.scoreInfo.details
+        ].filter(Boolean);
+
         const comparisonSources = [
+            ...detailSources,
             record.answerComparison,
-            record.realData && record.realData.answerComparison
+            record.realData && record.realData.answerComparison,
+            record.rawData && record.rawData.answerComparison
         ].filter(Boolean);
 
         const userSources = [
+            ...detailSources.map(source => extractFromDetails(source, entry => entry.userAnswer ?? entry.user ?? entry.answer)),
+            extractFromAnswerList(record.answers, entry => entry.answer ?? entry.userAnswer ?? entry.user),
+            extractFromAnswerList(record.realData && record.realData.answers, entry => entry.answer ?? entry.userAnswer ?? entry.user),
+            extractFromAnswerList(record.rawData && record.rawData.answers, entry => entry.answer ?? entry.userAnswer ?? entry.user),
             extractFromComparison(record.answerComparison, entry => entry.userAnswer ?? entry.user ?? entry.answer),
             extractFromComparison(record.realData && record.realData.answerComparison, entry => entry.userAnswer ?? entry.user ?? entry.answer),
+            extractFromComparison(record.rawData && record.rawData.answerComparison, entry => entry.userAnswer ?? entry.user ?? entry.answer),
             record.answers,
             record.realData && record.realData.answers,
-            extractFromDetails(record.scoreInfo && record.scoreInfo.details, entry => entry.userAnswer ?? entry.user),
-            extractFromDetails(record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details, entry => entry.userAnswer ?? entry.user)
+            record.rawData && record.rawData.answers
         ].filter(Boolean);
 
         const coreContracts = getPracticeCoreContracts();
         if (!coreContracts || typeof coreContracts.resolveRecordCorrectAnswerMap !== 'function') {
             throw new Error('AnswerComparisonUtils requires PracticeCore.contracts.resolveRecordCorrectAnswerMap');
         }
-        const correctMap = coreContracts.resolveRecordCorrectAnswerMap(record);
+        const correctMap = mergeSourceMaps([
+            coreContracts.resolveRecordCorrectAnswerMap(record),
+            ...detailSources.map(source => extractFromDetails(source, entry => entry.correctAnswer ?? entry.correct))
+        ]);
 
         const comparisonMap = mergeSourceMaps(comparisonSources);
         const userMap = mergeSourceMaps(userSources);
+        const storedResultMap = mergeSourceMaps([
+            ...detailSources.map(extractBooleanResultMap)
+        ]);
+        const wrongReasonMap = mergeSourceMaps([
+            record.wrongReasons,
+            record.realData && record.realData.wrongReasons,
+            record.rawData && record.rawData.wrongReasons,
+            ...detailSources.map(extractWrongReasonMap),
+            extractWrongReasonMap(record.answerComparison),
+            extractWrongReasonMap(record.realData && record.realData.answerComparison),
+            extractWrongReasonMap(record.rawData && record.rawData.answerComparison)
+        ]);
 
         const allKeys = new Set([
             ...Object.keys(comparisonMap),
             ...Object.keys(userMap),
-            ...Object.keys(correctMap)
+            ...Object.keys(correctMap),
+            ...Object.keys(storedResultMap),
+            ...Object.keys(wrongReasonMap)
         ]);
 
         const entryMap = {};
@@ -445,6 +535,8 @@
                     correctAnswer: null,
                     hasUserAnswer: false,
                     hasCorrectAnswer: false,
+                    storedIsCorrect: null,
+                    wrongReason: null,
                     userInfo: { display: null, normalized: null },
                     correctInfo: { display: null, normalized: null }
                 };
@@ -487,8 +579,18 @@
                 entry.correctInfo = correctInfo;
             }
 
-            if ((!entry.hasUserAnswer || !entry.hasCorrectAnswer) && comparisonMap[keyInfo.originalKey]) {
-                const fromComparison = comparisonMap[keyInfo.originalKey];
+            const storedIsCorrect = lookupAnswer(storedResultMap, lookupKeys);
+            if (typeof storedIsCorrect === 'boolean' && typeof entry.storedIsCorrect !== 'boolean') {
+                entry.storedIsCorrect = storedIsCorrect;
+            }
+
+            const wrongReason = lookupAnswer(wrongReasonMap, lookupKeys);
+            if (wrongReason && !entry.wrongReason) {
+                entry.wrongReason = wrongReason;
+            }
+
+            const fromComparison = lookupAnswer(comparisonMap, lookupKeys);
+            if ((!entry.hasUserAnswer || !entry.hasCorrectAnswer || typeof entry.storedIsCorrect !== 'boolean' || !entry.wrongReason) && fromComparison) {
                 if (fromComparison && typeof fromComparison === 'object') {
                     if (!entry.hasUserAnswer && (fromComparison.userAnswer || fromComparison.user || fromComparison.answer)) {
                         const compUserInfo = normalizeForComparison(fromComparison.userAnswer ?? fromComparison.user ?? fromComparison.answer);
@@ -505,6 +607,12 @@
                             entry.hasCorrectAnswer = true;
                         }
                         entry.correctInfo = compCorrectInfo;
+                    }
+                    if (typeof fromComparison.isCorrect === 'boolean' && typeof entry.storedIsCorrect !== 'boolean') {
+                        entry.storedIsCorrect = fromComparison.isCorrect;
+                    }
+                    if (!entry.wrongReason && (fromComparison.wrongReason || fromComparison.wrongReasonNote || fromComparison.errorReason)) {
+                        entry.wrongReason = fromComparison.wrongReason || fromComparison.wrongReasonNote || fromComparison.errorReason;
                     }
                 }
             }

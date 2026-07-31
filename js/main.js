@@ -338,6 +338,92 @@ async function cleanupOldCache() {
 
 // --- Data Loading and Management ---
 
+function normalizePracticeRecordTitleForLookup(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[’‘]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/[\s\-_/]+/g, ' ')
+        .replace(/^[pc]\s*[123]\s*(low|medium|high|次高频|高频|中频|低频)?\s*/i, '')
+        .trim();
+}
+
+function findExamForPracticeRecord(record, examIndex) {
+    if (!record || !Array.isArray(examIndex) || examIndex.length === 0) {
+        return null;
+    }
+    const metadata = record.metadata || {};
+    const realData = record.realData || {};
+    const idCandidates = [
+        record.examId,
+        record.derivedExamId,
+        metadata.examId,
+        realData.examId,
+        realData.derivedExamId
+    ].map((value) => value == null ? '' : String(value).trim()).filter(Boolean);
+    for (const candidate of idCandidates) {
+        const matched = examIndex.find((exam) => exam && String(exam.id) === candidate);
+        if (matched) {
+            return matched;
+        }
+    }
+
+    const recordTitle = normalizePracticeRecordTitleForLookup(
+        record.title || record.examTitle || metadata.examTitle || realData.title
+    );
+    if (!recordTitle) {
+        return null;
+    }
+    return examIndex.find((exam) => {
+        const examTitle = normalizePracticeRecordTitleForLookup(exam && exam.title);
+        return examTitle && (
+            examTitle === recordTitle ||
+            recordTitle.includes(examTitle) ||
+            examTitle.includes(recordTitle)
+        );
+    }) || null;
+}
+
+function enrichPracticeRecordsWithExamIndex(records, examIndex) {
+    if (!Array.isArray(records) || !Array.isArray(examIndex) || examIndex.length === 0) {
+        return Array.isArray(records) ? records : [];
+    }
+    return records.map((record) => {
+        if (!record || typeof record !== 'object') {
+            return record;
+        }
+        const exam = findExamForPracticeRecord(record, examIndex);
+        if (!exam) {
+            return record;
+        }
+        const metadata = { ...(record.metadata || {}) };
+        const realData = record.realData && typeof record.realData === 'object'
+            ? { ...record.realData }
+            : {};
+        metadata.examId = exam.id || metadata.examId;
+        metadata.examTitle = exam.title || metadata.examTitle;
+        metadata.category = exam.category || metadata.category;
+        metadata.frequency = exam.frequency || metadata.frequency;
+        metadata.type = exam.type || metadata.type || 'reading';
+        realData.examId = exam.id || realData.examId;
+        realData.title = exam.title || realData.title;
+        realData.category = exam.category || realData.category;
+        realData.frequency = exam.frequency || realData.frequency;
+        realData.type = exam.type || realData.type || 'reading';
+        return {
+            ...record,
+            examId: exam.id || record.examId,
+            derivedExamId: exam.id || record.derivedExamId,
+            category: exam.category || record.category,
+            frequency: exam.frequency || record.frequency,
+            type: exam.type || record.type || 'reading',
+            metadata,
+            realData
+        };
+    });
+}
+
 // Phase 3: 练习记录同步 - 保留在 main.js（核心数据流，暂不迁移）
 async function syncPracticeRecords(options = {}) {
     const { forceRender = false } = options || {};
@@ -406,6 +492,12 @@ async function syncPracticeRecords(options = {}) {
                 }
             }
             if (!Number.isFinite(duration)) duration = 0;
+            const durationUnknown = Boolean(
+                r.durationUnknown ||
+                r.timePrecision === 'date-only' ||
+                r.source === 'markdown-recovery' ||
+                r.recoveredFrom
+            ) && !(duration > 0);
 
             // Coerce percentage/accuracy if only scoreInfo exists
             const sInfo = r && (r.scoreInfo || rd.scoreInfo) || {};
@@ -419,8 +511,9 @@ async function syncPracticeRecords(options = {}) {
                 if (percentage === undefined) percentage = Math.round(acc * 100);
             }
 
-            return { ...r, duration, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
+            return { ...r, duration, durationUnknown, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
         });
+        records = enrichPracticeRecordsWithExamIndex(records, typeof getExamIndexState === 'function' ? getExamIndexState() : window.examIndex);
     } catch (e) { console.warn('[System] normalize durations failed:', e); }
 
     // 若数据未变则跳过 UI 刷新，避免无意义的列表重置
@@ -494,6 +587,10 @@ function startPracticeRecordsSyncInBackground(trigger = 'default') {
     }
 }
 
+if (typeof window !== 'undefined') {
+    window.ensurePracticeRecordsSync = ensurePracticeRecordsSync;
+}
+
 async function listCanonicalPracticeRecords() {
     if (window.PracticeRecordAPI && typeof window.PracticeRecordAPI.list === 'function') {
         const records = await window.PracticeRecordAPI.list();
@@ -515,44 +612,32 @@ async function replaceCanonicalPracticeRecords(records) {
     throw new Error('统一练习记录 API 未就绪');
 }
 
-function cleanupLegacyPracticeRecordArtifacts() {
-    // Unprefixed legacy keys only — never the active backend key.
-    const legacyRawKeys = ['practice_records', 'old_prefix_practice_records'];
-
-    try {
-        legacyRawKeys.forEach((key) => {
-            try { localStorage.removeItem(key); } catch (_) { }
-            try { sessionStorage.removeItem(key); } catch (_) { }
-        });
-    } catch (error) {
-        console.warn('[System] 清理 legacy 练习记录影子键失败:', error);
-    }
-
-    const storage = window.storage;
-    const shadowKey = storage && typeof storage.getKey === 'function'
-        ? storage.getKey('practice_records')
-        : null;
-    if (!shadowKey) {
+function cleanupLegacyPracticeRecordArtifacts(options = {}) {
+    const force = Boolean(options.force);
+    if (!force) {
+        // 保留所有历史练习记录 key。旧版本可能把唯一副本存在 localStorage/sessionStorage；
+        // 即使迁移到 IndexedDB/SQLite 成功，也不能在用户未确认前自动删除备份来源。
+        console.info('[System] 保留 legacy 练习记录影子键，避免误删用户历史数据。');
         return;
     }
-
-    // When IndexedDB is blocked/unavailable, writePersistentValue stores canonical
-    // practice_records under exam_system_practice_records in localStorage/sessionStorage.
-    // Removing that key after replace/delete would wipe the just-persisted history.
-    const mode = storage && storage.mode;
-    const usesWebStorageBackend = mode === 'localStorage' || mode === 'sessionStorage';
-    if (usesWebStorageBackend || storage.indexedDBBlocked || !storage.indexedDB) {
-        return;
-    }
-
-    try { localStorage.removeItem(shadowKey); } catch (_) { }
-    try { sessionStorage.removeItem(shadowKey); } catch (_) { }
+    const keys = [
+        'practice_records',
+        'old_prefix_practice_records',
+        'exam_system_practice_records'
+    ];
+    keys.forEach((key) => {
+        try { localStorage.removeItem(key); } catch (_) {}
+        try { sessionStorage.removeItem(key); } catch (_) {}
+    });
+    console.info('[System] 已清理 legacy 练习记录影子键，避免删除记录被回灌。');
 }
 
 async function persistPracticeRecordsAndRefresh(records, trigger = 'manual-update') {
     const finalRecords = Array.isArray(records) ? records : [];
     await replaceCanonicalPracticeRecords(finalRecords);
-    cleanupLegacyPracticeRecordArtifacts();
+    cleanupLegacyPracticeRecordArtifacts({
+        force: trigger === 'single-delete' || trigger === 'bulk-delete' || trigger === 'clear-all'
+    });
     await syncPracticeRecords({ forceRender: true });
     return getPracticeRecordsState();
 }
@@ -747,6 +832,8 @@ if (typeof window !== 'undefined') {
     window.saveReadingHighlightVocab = saveReadingHighlightVocab;
 }
 
+const completedPracticeRecordIdsBySession = new Map();
+
 function setupMessageListener() {
     const findFallbackSessionByWindow = (sourceWindow) => {
         if (!sourceWindow || !window.fallbackExamSessions || typeof fallbackExamSessions.entries !== 'function') {
@@ -809,6 +896,8 @@ function setupMessageListener() {
             saveReadingHighlightVocab(payload).catch((error) => {
                 console.warn('[VocabStore] 阅读高亮生词保存异常:', error);
             });
+        } else if (type === 'PRACTICE_WRONG_REASON_UPDATE') {
+            handlePracticeWrongReasonUpdateMessage(data);
         } else if (type === 'PRACTICE_COMPLETE' || type === 'practice_completed') {
             const payload = extractCompletionPayload(data) || {};
             const sessionId = extractCompletionSessionId(data);
@@ -847,10 +936,30 @@ function setupMessageListener() {
                     }
                 );
             } else {
-                console.log('[System] 收到练习完成消息，正在同步记录...');
+                const fallbackExamId = payload?.examId || payload?.metadata?.examId || null;
+                if (fallbackExamId) {
+                    console.log('[System] 收到练习完成消息，未匹配会话，按 payload examId 兜底保存');
+                    savePracticeCompletionRecord(fallbackExamId, payload).then(
+                        () => {
+                            if (shouldNotify) {
+                                showMessage('练习已完成，正在更新记录...', 'success');
+                                showCompletionSummary(payload);
+                            }
+                            setTimeout(syncPracticeRecords, 300);
+                        },
+                        (saveError) => {
+                            console.error('[System] 兜底保存练习完成记录失败:', saveError);
+                            if (shouldNotify) {
+                                showMessage('练习已完成，但记录保存失败，请重试或检查数据。', 'error');
+                            }
+                            setTimeout(syncPracticeRecords, 300);
+                        }
+                    );
+                    return;
+                }
+                console.log('[System] 收到练习完成消息，但缺少 examId，只能同步记录');
                 if (shouldNotify) {
-                    showMessage('练习已完成，正在更新记录...', 'success');
-                    showCompletionSummary(payload);
+                    showMessage('练习已完成，但记录保存缺少题目 ID。', 'error');
                 }
                 setTimeout(syncPracticeRecords, 300);
             }
@@ -1112,6 +1221,793 @@ function resolveCompletionCategory(exam = {}, realData = {}) {
     return 'Unknown';
 }
 
+function normalizePracticeWrongReason(value) {
+    const source = value && typeof value === 'object'
+        ? value
+        : { category: value };
+    const category = String(source.category || source.reason || source.type || '').trim();
+    const note = String(source.note || source.detail || source.text || '').trim();
+    if (!category && !note) {
+        return null;
+    }
+    return {
+        category,
+        note,
+        updatedAt: source.updatedAt || new Date().toISOString()
+    };
+}
+
+function normalizePracticeQuestionId(rawValue) {
+    if (!rawValue) return null;
+    const value = String(rawValue).trim().toLowerCase();
+    const exactNumber = value.match(/^q?(\d+)$/);
+    if (exactNumber) {
+        return `q${exactNumber[1]}`;
+    }
+    const match = value.match(/q(\d+)/);
+    return match ? `q${match[1]}` : null;
+}
+
+function arePracticeQuestionIdsEquivalent(left, right) {
+    const leftText = String(left ?? '').trim();
+    const rightText = String(right ?? '').trim();
+    if (!leftText || !rightText) {
+        return false;
+    }
+    if (leftText === rightText) {
+        return true;
+    }
+    const normalizedLeft = normalizePracticeQuestionId(leftText);
+    const normalizedRight = normalizePracticeQuestionId(rightText);
+    return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function derivePracticeExamIdFromSessionId(value) {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    const match = text.match(/^([pc]\d-(?:low|medium|high)-\d+)(?:_|$)/i);
+    return match ? match[1] : null;
+}
+
+function getPracticeRecordExamIds(record = {}) {
+    const metadata = record?.metadata || {};
+    const realData = record?.realData || {};
+    const rawData = record?.rawData || {};
+    return [
+        record?.examId,
+        record?.dataKey,
+        record?.derivedExamId,
+        metadata.examId,
+        metadata.dataKey,
+        metadata.derivedExamId,
+        realData.examId,
+        realData.dataKey,
+        realData.derivedExamId,
+        rawData.examId,
+        rawData.dataKey,
+        rawData.derivedExamId,
+        derivePracticeExamIdFromSessionId(record?.sessionId),
+        derivePracticeExamIdFromSessionId(record?.id),
+        derivePracticeExamIdFromSessionId(metadata.sessionId),
+        derivePracticeExamIdFromSessionId(realData.sessionId),
+        derivePracticeExamIdFromSessionId(rawData.sessionId)
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function practiceRecordMatchesExam(record, examId) {
+    const target = String(examId || '').trim();
+    if (!target) {
+        return true;
+    }
+    const normalizeId = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const normalizedTarget = normalizeId(target);
+    return getPracticeRecordExamIds(record).some((value) => {
+        const candidate = normalizeId(value);
+        return Boolean(
+            candidate
+            && (
+                candidate === normalizedTarget
+                || candidate.endsWith(`-${normalizedTarget}`)
+                || normalizedTarget.endsWith(`-${candidate}`)
+            )
+        );
+    });
+}
+
+function getPracticeRecordTitles(record = {}) {
+    const metadata = record?.metadata || {};
+    const realData = record?.realData || {};
+    const rawData = record?.rawData || {};
+    return [
+        record?.title,
+        record?.examTitle,
+        metadata.title,
+        metadata.examTitle,
+        realData.title,
+        realData.examTitle,
+        rawData.title,
+        rawData.examTitle
+    ].map((value) => normalizePracticeRecordTitleForLookup(value)).filter(Boolean);
+}
+
+function practiceRecordMatchesTitle(record, title) {
+    const target = normalizePracticeRecordTitleForLookup(title);
+    if (!target) {
+        return false;
+    }
+    return getPracticeRecordTitles(record).some((candidate) => {
+        if (!candidate) {
+            return false;
+        }
+        if (candidate === target) {
+            return true;
+        }
+        return candidate.length >= 12 && target.includes(candidate)
+            || target.length >= 12 && candidate.includes(target);
+    });
+}
+
+function practiceRecordMatchesWrongReasonIdentity(record, examId, title) {
+    return practiceRecordMatchesExam(record, examId) || practiceRecordMatchesTitle(record, title);
+}
+
+function resolveCanonicalCompletionExamId(examId, realData = {}, exam = {}) {
+    return String(
+        exam?.id
+        || realData?.examId
+        || realData?.dataKey
+        || realData?.metadata?.examId
+        || realData?.metadata?.dataKey
+        || derivePracticeExamIdFromSessionId(realData?.sessionId)
+        || derivePracticeExamIdFromSessionId(realData?.metadata?.sessionId)
+        || examId
+        || ''
+    ).trim();
+}
+
+function comparisonMapHasPracticeQuestion(map, questionId) {
+    if (!map || typeof map !== 'object' || !questionId) {
+        return false;
+    }
+    return Object.entries(map).some(([key, entry]) => (
+        arePracticeQuestionIdsEquivalent(key, questionId)
+        || arePracticeQuestionIdsEquivalent(entry?.questionId, questionId)
+        || arePracticeQuestionIdsEquivalent(entry?.displayNumber, questionId)
+        || arePracticeQuestionIdsEquivalent(entry?.questionNumber, questionId)
+    ));
+}
+
+function practiceRecordContainsWrongReasonQuestions(record, questionIds = [], targetExamId = '') {
+    const ids = questionIds.filter(Boolean);
+    if (!record || ids.length === 0) {
+        return false;
+    }
+    const maps = [
+        record.answerComparison,
+        record.answerDetails,
+        record.scoreInfo && record.scoreInfo.details,
+        record.realData && record.realData.answerComparison,
+        record.realData && record.realData.answerDetails,
+        record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details,
+        record.rawData && record.rawData.answerComparison,
+        record.rawData && record.rawData.answerDetails,
+        record.rawData && record.rawData.scoreInfo && record.rawData.scoreInfo.details
+    ];
+    if (ids.every((questionId) => maps.some((map) => comparisonMapHasPracticeQuestion(map, questionId)))) {
+        return true;
+    }
+    if (!Array.isArray(record.suiteEntries)) {
+        return false;
+    }
+    return record.suiteEntries.some((entry) => {
+        if (!entry || (targetExamId && !practiceRecordMatchesExam(entry, targetExamId))) {
+            return false;
+        }
+        const entryMaps = [
+            entry.answerComparison,
+            entry.answerDetails,
+            entry.scoreInfo && entry.scoreInfo.details,
+            entry.rawData && entry.rawData.answerComparison,
+            entry.rawData && entry.rawData.answerDetails,
+            entry.rawData && entry.rawData.scoreInfo && entry.rawData.scoreInfo.details
+        ];
+        return ids.every((questionId) => entryMaps.some((map) => comparisonMapHasPracticeQuestion(map, questionId)));
+    });
+}
+
+function summarizePracticeRecordCandidates(records = []) {
+    return (Array.isArray(records) ? records : []).slice(0, 8).map((record) => ({
+        id: record?.id || null,
+        sessionId: record?.sessionId || record?.metadata?.sessionId || null,
+        examIds: getPracticeRecordExamIds(record).slice(0, 6),
+        titles: getPracticeRecordTitles(record).slice(0, 4),
+        answerKeys: record?.answerComparison && typeof record.answerComparison === 'object'
+            ? Object.keys(record.answerComparison).slice(0, 10)
+            : [],
+        scoreKeys: record?.scoreInfo?.details && typeof record.scoreInfo.details === 'object'
+            ? Object.keys(record.scoreInfo.details).slice(0, 10)
+            : []
+    }));
+}
+
+function summarizePracticeWrongReasonPayload(payload = {}) {
+    return {
+        recordId: payload.recordId || payload.id || null,
+        sessionId: payload.sessionId || null,
+        reviewSessionId: payload.reviewSessionId || null,
+        suiteSessionId: payload.suiteSessionId || null,
+        examId: payload.examId || payload.dataKey || derivePracticeExamIdFromSessionId(payload.sessionId) || null,
+        title: payload.title || payload.examTitle || payload.metadata?.title || payload.metadata?.examTitle || null,
+        targetCount: Array.isArray(payload.wrongReasonTargets) ? payload.wrongReasonTargets.length : 0,
+        questionIds: Object.keys(payload.wrongReasons || {})
+    };
+}
+
+function logPracticeWrongReasonSave(level, event, detail = {}) {
+    const logger = console && typeof console[level] === 'function'
+        ? console[level]
+        : (console && typeof console.log === 'function' ? console.log : null);
+    if (!logger) {
+        return;
+    }
+    try {
+        let serialized = '';
+        try {
+            serialized = ` ${JSON.stringify(detail)}`;
+        } catch (_) { /* ignore */ }
+        logger.call(console, `[WrongReasonSave] ${event}${serialized}`, detail);
+    } catch (_) { /* ignore logging failures */ }
+}
+
+function applyWrongReasonsToMap(target, wrongReasons) {
+    if (!target || typeof target !== 'object') {
+        return;
+    }
+    Object.entries(wrongReasons || {}).forEach(([questionId, reasonValue]) => {
+        const targetKey = target[questionId]
+            ? questionId
+            : Object.keys(target).find((key) => arePracticeQuestionIdsEquivalent(key, questionId));
+        const entry = targetKey ? target[targetKey] : null;
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+        const reason = normalizePracticeWrongReason(reasonValue);
+        if (reason) {
+            entry.wrongReason = reason;
+        } else {
+            delete entry.wrongReason;
+        }
+    });
+}
+
+function collectExistingWrongReasons(record, options = {}) {
+    const merged = {};
+    [
+        record && record.wrongReasons,
+        record && record.realData && record.realData.wrongReasons,
+        record && record.rawData && record.rawData.wrongReasons
+    ].forEach((source) => {
+        if (!source || typeof source !== 'object') {
+            return;
+        }
+        Object.entries(source).forEach(([questionId, value]) => {
+            const reason = normalizePracticeWrongReason(value);
+            if (reason) {
+                merged[questionId] = reason;
+            }
+        });
+    });
+    if (options.includeSuiteEntries && Array.isArray(record && record.suiteEntries)) {
+        record.suiteEntries.forEach((entry) => {
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            const entryExamId = entry.examId || entry.metadata?.examId || '';
+            if (!entryExamId) {
+                return;
+            }
+            const entryReasons = collectExistingWrongReasons(entry);
+            Object.entries(entryReasons).forEach(([questionId, reason]) => {
+                const key = String(questionId).includes('::')
+                    ? questionId
+                    : `${entryExamId}::${questionId}`;
+                merged[key] = reason;
+            });
+        });
+    }
+    return merged;
+}
+
+function isSuitePracticeRecord(record, payload = {}) {
+    const frequency = String(record?.frequency || record?.metadata?.frequency || '').toLowerCase();
+    return Boolean(
+        record?.suiteMode
+        || (Array.isArray(record?.suiteEntries) && record.suiteEntries.length > 0)
+        || frequency === 'suite'
+        || payload.suiteSessionId
+    );
+}
+
+function isWrongReasonFallbackPracticeRecord(record) {
+    return Boolean(
+        record?.source === 'wrong-reason-fallback'
+        || record?.metadata?.source === 'wrong-reason-fallback'
+        || record?.realData?.source === 'wrong-reason-fallback'
+    );
+}
+
+function getPracticeWrongReasonRecordQuality(record) {
+    if (!record || typeof record !== 'object') {
+        return -1000;
+    }
+    const answerCount = record.answerComparison && typeof record.answerComparison === 'object'
+        ? Object.keys(record.answerComparison).length
+        : 0;
+    const totalQuestions = Number(record.totalQuestions ?? record.scoreInfo?.total ?? record.realData?.totalQuestions ?? record.realData?.scoreInfo?.total ?? 0);
+    const duration = Number(record.duration ?? record.scoreInfo?.duration ?? record.scoreInfo?.timeSpent ?? record.realData?.duration ?? 0);
+    let score = 0;
+    if (isWrongReasonFallbackPracticeRecord(record)) {
+        score -= 1000;
+    }
+    if (Number.isFinite(duration) && duration > 0) {
+        score += 100;
+    }
+    if (Number.isFinite(totalQuestions) && totalQuestions > 1) {
+        score += 50;
+    }
+    if (answerCount > 1) {
+        score += 25;
+    }
+    return score;
+}
+
+function sortPracticeWrongReasonCandidates(records = []) {
+    return (Array.isArray(records) ? records : []).slice().sort((a, b) => {
+        const qualityDiff = getPracticeWrongReasonRecordQuality(b) - getPracticeWrongReasonRecordQuality(a);
+        if (qualityDiff) {
+            return qualityDiff;
+        }
+        return new Date(b.updatedAt || b.endTime || b.date || 0) - new Date(a.updatedAt || a.endTime || a.date || 0);
+    });
+}
+
+function mapWrongReasonKeysForRecord(record, wrongReasons, payload = {}) {
+    const normalized = {};
+    const targetExamId = payload.examId || payload.dataKey || derivePracticeExamIdFromSessionId(payload.sessionId) || '';
+    const shouldPrefix = isSuitePracticeRecord(record, payload)
+        && targetExamId
+        && targetExamId !== record?.examId
+        && !String(targetExamId).startsWith('suite-');
+    Object.entries(wrongReasons || {}).forEach(([questionId, value]) => {
+        const key = shouldPrefix && !String(questionId).includes('::')
+            ? `${targetExamId}::${questionId}`
+            : questionId;
+        normalized[key] = value;
+    });
+    return normalized;
+}
+
+function mergeWrongReasonMap(existingReasons, incomingReasons) {
+    const merged = Object.assign({}, existingReasons || {});
+    Object.entries(incomingReasons || {}).forEach(([questionId, value]) => {
+        const reason = normalizePracticeWrongReason(value);
+        if (reason) {
+            merged[questionId] = reason;
+        } else {
+            delete merged[questionId];
+        }
+    });
+    return merged;
+}
+
+function applyWrongReasonsToSuiteEntries(next, localWrongReasons, payload = {}) {
+    if (!Array.isArray(next?.suiteEntries) || next.suiteEntries.length === 0) {
+        return;
+    }
+    const targetExamId = payload.examId || payload.dataKey || derivePracticeExamIdFromSessionId(payload.sessionId) || '';
+    if (!targetExamId || targetExamId === next.examId || String(targetExamId).startsWith('suite-')) {
+        return;
+    }
+    next.suiteEntries.forEach((entry) => {
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+        const entryExamId = entry.examId || entry.metadata?.examId || '';
+        if (entryExamId !== targetExamId) {
+            return;
+        }
+        entry.wrongReasons = mergeWrongReasonMap(collectExistingWrongReasons(entry), localWrongReasons);
+        if (entry.answerComparison && typeof entry.answerComparison === 'object') {
+            applyWrongReasonsToMap(entry.answerComparison, localWrongReasons);
+        }
+        if (entry.scoreInfo?.details && typeof entry.scoreInfo.details === 'object') {
+            applyWrongReasonsToMap(entry.scoreInfo.details, localWrongReasons);
+        }
+        if (entry.rawData && typeof entry.rawData === 'object') {
+            entry.rawData.wrongReasons = mergeWrongReasonMap(collectExistingWrongReasons(entry.rawData), localWrongReasons);
+            if (entry.rawData.answerComparison && typeof entry.rawData.answerComparison === 'object') {
+                applyWrongReasonsToMap(entry.rawData.answerComparison, localWrongReasons);
+            }
+            if (entry.rawData.scoreInfo?.details && typeof entry.rawData.scoreInfo.details === 'object') {
+                applyWrongReasonsToMap(entry.rawData.scoreInfo.details, localWrongReasons);
+            }
+        }
+    });
+}
+
+function buildRecordWithWrongReasons(record, wrongReasons, payload = {}) {
+    const next = JSON.parse(JSON.stringify(record || {}));
+    const originalTiming = {
+        id: next.id,
+        sessionId: next.sessionId,
+        startTime: next.startTime,
+        endTime: next.endTime,
+        date: next.date,
+        duration: next.duration,
+        createdAt: next.createdAt,
+        updatedAt: next.updatedAt
+    };
+    const recordWrongReasons = mapWrongReasonKeysForRecord(next, wrongReasons, payload);
+    const normalizedReasons = mergeWrongReasonMap(
+        collectExistingWrongReasons(next, { includeSuiteEntries: true }),
+        recordWrongReasons
+    );
+
+    next.wrongReasons = normalizedReasons;
+    next.answerComparison = next.answerComparison && typeof next.answerComparison === 'object'
+        ? next.answerComparison
+        : {};
+    applyWrongReasonsToMap(next.answerComparison, recordWrongReasons);
+
+    if (next.realData && typeof next.realData === 'object') {
+        next.realData.answerComparison = next.realData.answerComparison && typeof next.realData.answerComparison === 'object'
+            ? next.realData.answerComparison
+            : JSON.parse(JSON.stringify(next.answerComparison));
+        next.realData.wrongReasons = JSON.parse(JSON.stringify(normalizedReasons));
+        applyWrongReasonsToMap(next.realData.answerComparison, recordWrongReasons);
+    }
+
+    if (next.answerDetails && typeof next.answerDetails === 'object') {
+        applyWrongReasonsToMap(next.answerDetails, recordWrongReasons);
+    }
+    if (next.scoreInfo?.details && typeof next.scoreInfo.details === 'object') {
+        applyWrongReasonsToMap(next.scoreInfo.details, recordWrongReasons);
+    }
+    if (next.realData?.scoreInfo?.details && typeof next.realData.scoreInfo.details === 'object') {
+        applyWrongReasonsToMap(next.realData.scoreInfo.details, recordWrongReasons);
+    }
+    applyWrongReasonsToSuiteEntries(next, wrongReasons, payload);
+
+    Object.assign(next, originalTiming);
+    next.metadata = next.metadata && typeof next.metadata === 'object' ? next.metadata : {};
+    const canonicalExamId = next.examId
+        || next.dataKey
+        || payload.examId
+        || payload.dataKey
+        || derivePracticeExamIdFromSessionId(next.sessionId)
+        || derivePracticeExamIdFromSessionId(payload.sessionId)
+        || null;
+    if (canonicalExamId) {
+        next.examId = next.examId || canonicalExamId;
+        next.dataKey = next.dataKey || canonicalExamId;
+        next.derivedExamId = next.derivedExamId || canonicalExamId;
+        next.metadata.examId = next.metadata.examId || canonicalExamId;
+        next.metadata.dataKey = next.metadata.dataKey || canonicalExamId;
+        next.metadata.derivedExamId = next.metadata.derivedExamId || canonicalExamId;
+    }
+    next.metadata.wrongReasonUpdatedAt = payload.updatedAt || new Date().toISOString();
+    if (next.realData && typeof next.realData === 'object') {
+        if (canonicalExamId) {
+            next.realData.examId = next.realData.examId || canonicalExamId;
+            next.realData.dataKey = next.realData.dataKey || canonicalExamId;
+            next.realData.derivedExamId = next.realData.derivedExamId || canonicalExamId;
+        }
+        next.realData.wrongReasonUpdatedAt = next.metadata.wrongReasonUpdatedAt;
+    }
+    return next;
+}
+
+function recordHasPracticeWrongReasons(record, wrongReasons, payload = {}) {
+    if (!record || !wrongReasons || typeof wrongReasons !== 'object') {
+        return false;
+    }
+    const expected = mapWrongReasonKeysForRecord(record, wrongReasons, payload);
+    const persisted = collectExistingWrongReasons(record, { includeSuiteEntries: true });
+    return Object.entries(expected).every(([questionId, reasonValue]) => {
+        const expectedReason = normalizePracticeWrongReason(reasonValue);
+        if (!expectedReason) {
+            return true;
+        }
+        const persistedReason = normalizePracticeWrongReason(persisted[questionId]);
+        return Boolean(
+            persistedReason
+            && persistedReason.category === expectedReason.category
+            && persistedReason.note === expectedReason.note
+        );
+    });
+}
+
+async function readBackPracticeWrongReasonRecord(api, payload = {}, candidateRecord = null) {
+    if (recordHasPracticeWrongReasons(candidateRecord, payload.wrongReasons || {}, payload)) {
+        return candidateRecord;
+    }
+    const candidateId = candidateRecord?.id || payload.recordId || payload.id || null;
+    if (candidateId && api && typeof api.getById === 'function') {
+        const recordById = await api.getById(candidateId).catch(() => null);
+        if (recordHasPracticeWrongReasons(recordById, payload.wrongReasons || {}, payload)) {
+            return recordById;
+        }
+    }
+    const resolved = await resolvePracticeRecordForWrongReasonUpdate(payload).catch(() => null);
+    if (recordHasPracticeWrongReasons(resolved, payload.wrongReasons || {}, payload)) {
+        return resolved;
+    }
+    return null;
+}
+
+async function resolvePracticeRecordForWrongReasonUpdate(payload = {}) {
+    const api = window.PracticeRecordAPI;
+    if (!api || typeof api.getById !== 'function' || typeof api.list !== 'function') {
+        throw new Error('统一练习记录 API 未就绪');
+    }
+    const explicitId = payload.recordId || payload.id || null;
+    if (explicitId) {
+        const record = await api.getById(explicitId);
+        if (record && !isWrongReasonFallbackPracticeRecord(record)) {
+            logPracticeWrongReasonSave('info', 'main:match-explicit-id', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                matchedRecordId: record.id || null
+            });
+            return record;
+        }
+        if (record) {
+            logPracticeWrongReasonSave('warn', 'main:skip-fallback-explicit-id', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                skippedRecordId: record.id || null
+            });
+        }
+    }
+
+    const sessionId = payload.sessionId || payload.metadata?.sessionId || null;
+    const mappedId = sessionId ? completedPracticeRecordIdsBySession.get(sessionId) : null;
+    if (mappedId) {
+        const record = await api.getById(mappedId);
+        if (record && !isWrongReasonFallbackPracticeRecord(record)) {
+            logPracticeWrongReasonSave('info', 'main:match-session-map', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                matchedRecordId: record.id || null
+            });
+            return record;
+        }
+        if (record) {
+            logPracticeWrongReasonSave('warn', 'main:skip-fallback-session-map', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                skippedRecordId: record.id || null
+            });
+        }
+    }
+
+    const suiteSessionId = payload.suiteSessionId || payload.metadata?.suiteSessionId || null;
+    if (suiteSessionId) {
+        const records = await api.list();
+        const suiteRecord = (Array.isArray(records) ? records : [])
+            .filter((record) => {
+                return Boolean(
+                    record
+                    && !isWrongReasonFallbackPracticeRecord(record)
+                    && (
+                        record.id === suiteSessionId
+                        || record.sessionId === suiteSessionId
+                        || record.suiteSessionId === suiteSessionId
+                        || record.metadata?.suiteSessionId === suiteSessionId
+                        || record.realData?.suiteSessionId === suiteSessionId
+                    )
+                    && (record.suiteMode || (Array.isArray(record.suiteEntries) && record.suiteEntries.length > 0))
+                );
+            })
+            .sort((a, b) => new Date(b.updatedAt || b.endTime || b.date || 0) - new Date(a.updatedAt || a.endTime || a.date || 0))[0] || null;
+        if (suiteRecord) {
+            logPracticeWrongReasonSave('info', 'main:match-suite-session', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                matchedRecordId: suiteRecord.id || null
+            });
+            return suiteRecord;
+        }
+    }
+
+    const findFromList = async () => {
+        const examId = payload.examId
+            || payload.dataKey
+            || payload.metadata?.examId
+            || payload.metadata?.dataKey
+            || derivePracticeExamIdFromSessionId(payload.sessionId)
+            || null;
+        const examTitle = payload.title || payload.examTitle || payload.metadata?.title || payload.metadata?.examTitle || null;
+        const questionIds = Object.keys(payload.wrongReasons || {});
+        const records = await api.list();
+        const candidates = (Array.isArray(records) ? records : [])
+        .filter((record) => {
+            if (isWrongReasonFallbackPracticeRecord(record)) {
+                return false;
+            }
+            const suiteLikeRecord = Boolean(
+                record?.suiteMode
+                || (Array.isArray(record?.suiteEntries) && record.suiteEntries.length > 0)
+                || record?.suiteSessionId
+                || record?.metadata?.suiteSessionId
+                || record?.realData?.suiteSessionId
+                || String(record?.metadata?.practiceMode || '').toLowerCase() === 'suite'
+            );
+            if (!suiteSessionId && suiteLikeRecord) {
+                return false;
+            }
+            const sameSession = !sessionId || record.sessionId === sessionId || record.realData?.sessionId === sessionId || record.metadata?.sessionId === sessionId;
+            const sameIdentity = practiceRecordMatchesWrongReasonIdentity(record, examId, examTitle);
+            return sameSession && sameIdentity;
+        });
+        const exact = sortPracticeWrongReasonCandidates(candidates)[0] || null;
+        if (exact || !examId) {
+            return exact;
+        }
+        const sameExamSingles = (Array.isArray(records) ? records : [])
+            .filter((record) => {
+                if (isWrongReasonFallbackPracticeRecord(record)) {
+                    return false;
+                }
+                const suiteLikeRecord = Boolean(
+                    record?.suiteMode
+                    || (Array.isArray(record?.suiteEntries) && record.suiteEntries.length > 0)
+                    || record?.suiteSessionId
+                    || record?.metadata?.suiteSessionId
+                    || record?.realData?.suiteSessionId
+                    || String(record?.metadata?.practiceMode || '').toLowerCase() === 'suite'
+                );
+                return practiceRecordMatchesWrongReasonIdentity(record, examId, examTitle) && !suiteLikeRecord;
+            });
+        const sortedSameExamSingles = sortPracticeWrongReasonCandidates(sameExamSingles);
+        const questionMatched = sortedSameExamSingles.filter((record) => practiceRecordContainsWrongReasonQuestions(record, questionIds, examId));
+        if (questionMatched.length > 0) {
+            logPracticeWrongReasonSave('info', 'main:match-single-exam-question-fallback', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                matchedRecordId: questionMatched[0]?.id || null,
+                sameExamCount: sortedSameExamSingles.length,
+                questionMatchedCount: questionMatched.length
+            });
+            return questionMatched[0];
+        }
+        if (sortedSameExamSingles.length === 1) {
+            logPracticeWrongReasonSave('info', 'main:match-single-exam-only-fallback', {
+                payload: summarizePracticeWrongReasonPayload(payload),
+                matchedRecordId: sortedSameExamSingles[0]?.id || null
+            });
+            return sortedSameExamSingles[0];
+        }
+        logPracticeWrongReasonSave('warn', 'main:match-single-exam-ambiguous', {
+            payload: summarizePracticeWrongReasonPayload(payload),
+            sameExamCount: sortedSameExamSingles.length,
+            questionMatchedCount: questionMatched.length,
+            recordCount: Array.isArray(records) ? records.length : null,
+            sampleRecords: summarizePracticeRecordCandidates(records)
+        });
+        return null;
+    };
+
+    let record = await findFromList();
+    for (let attempt = 0; !record && attempt < 3; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        record = await findFromList();
+    }
+    logPracticeWrongReasonSave(record ? 'info' : 'warn', 'main:match-final', {
+        payload: summarizePracticeWrongReasonPayload(payload),
+        matchedRecordId: record?.id || null
+    });
+    return record;
+}
+
+async function savePracticeWrongReasonUpdate(payload = {}) {
+    const wrongReasons = payload.wrongReasons && typeof payload.wrongReasons === 'object'
+        ? payload.wrongReasons
+        : {};
+    if (Object.keys(wrongReasons).length === 0) {
+        logPracticeWrongReasonSave('warn', 'main:no-reasons', {
+            payload: summarizePracticeWrongReasonPayload(payload)
+        });
+        return null;
+    }
+    const api = window.PracticeRecordAPI;
+    if (!api || typeof api.saveRecord !== 'function') {
+        throw new Error('统一练习记录 API 未就绪');
+    }
+    const record = await resolvePracticeRecordForWrongReasonUpdate(payload);
+    if (!record) {
+        logPracticeWrongReasonSave('warn', 'main:no-target-record', {
+            payload: summarizePracticeWrongReasonPayload(payload)
+        });
+        throw new Error('找不到可更新的练习记录');
+    }
+    const nextRecord = buildRecordWithWrongReasons(record, wrongReasons, payload);
+    const saved = await api.saveRecord(nextRecord, {
+        currentVersion: (window.scoreStorage && window.scoreStorage.currentVersion) || '0.6.2-fix',
+        maxRecords: (window.scoreStorage && window.scoreStorage.maxRecords) || 1000,
+        updateStats: false
+    });
+    const verifiedRecord = await readBackPracticeWrongReasonRecord(api, payload, saved || nextRecord);
+    if (!verifiedRecord) {
+        logPracticeWrongReasonSave('warn', 'main:verify-failed', {
+            payload: summarizePracticeWrongReasonPayload(payload),
+            recordId: saved?.id || nextRecord?.id || null
+        });
+        throw new Error('错因保存后读回校验失败');
+    }
+    const sessionId = saved?.sessionId || payload.sessionId || null;
+    if (sessionId && saved?.id) {
+        completedPracticeRecordIdsBySession.set(sessionId, saved.id);
+    }
+    logPracticeWrongReasonSave('info', 'main:saved', {
+        payload: summarizePracticeWrongReasonPayload(payload),
+        recordId: verifiedRecord?.id || saved?.id || null
+    });
+    try {
+        window.dispatchEvent(new CustomEvent('practiceRecordsUpdated', {
+            detail: { source: 'wrong-reason-update', recordId: saved?.id || null }
+        }));
+    } catch (_) { /* ignore */ }
+    return verifiedRecord;
+}
+
+function handlePracticeWrongReasonUpdateMessage(messageData = {}) {
+    if (!messageData || messageData.type !== 'PRACTICE_WRONG_REASON_UPDATE') {
+        return false;
+    }
+    if (messageData.__practiceWrongReasonHandled === true) {
+        return true;
+    }
+    try {
+        Object.defineProperty(messageData, '__practiceWrongReasonHandled', {
+            value: true,
+            configurable: true
+        });
+    } catch (_) {
+        messageData.__practiceWrongReasonHandled = true;
+    }
+
+    const payload = messageData.data && typeof messageData.data === 'object'
+        ? messageData.data
+        : messageData;
+    savePracticeWrongReasonUpdate(payload).then(
+        () => setTimeout(syncPracticeRecords, 200),
+        (error) => console.warn('[PracticeRecord] 错因更新保存失败:', error)
+    );
+    return true;
+}
+
+if (typeof window !== 'undefined') {
+    window.savePracticeWrongReasonUpdate = savePracticeWrongReasonUpdate;
+    window.handlePracticeWrongReasonUpdateMessage = handlePracticeWrongReasonUpdateMessage;
+    if (window.__IELTS_MAIN_TEST_HOOKS__) {
+        window.__IELTS_MAIN_TEST__ = {
+            savePracticeWrongReasonUpdate,
+            resolvePracticeRecordForWrongReasonUpdate,
+            buildRecordWithWrongReasons,
+            practiceRecordContainsWrongReasonQuestions,
+            practiceRecordMatchesExam
+        };
+    }
+    if (!window.__practiceWrongReasonMessageListenerInstalled) {
+        window.__practiceWrongReasonMessageListenerInstalled = true;
+        window.addEventListener('message', (event) => {
+            try {
+                if (event.origin && event.origin !== 'null' && event.origin !== window.location.origin) {
+                    return;
+                }
+            } catch (_) { }
+            handlePracticeWrongReasonUpdateMessage(event.data || {});
+        });
+    }
+}
+
 async function savePracticeCompletionRecord(examId, realData) {
     try {
         const suiteSessionId = realData?.suiteSessionId
@@ -1142,12 +2038,26 @@ async function savePracticeCompletionRecord(examId, realData) {
             throw new Error('统一练习记录 API 未就绪');
         }
         const exam = findExamForCompletion(examId, realData);
+        const canonicalExamId = resolveCanonicalCompletionExamId(examId, realData, exam);
         const category = resolveCompletionCategory(exam, realData);
-        const record = await api.saveCompletion(realData, {
-            examId,
+        const completionPayload = Object.assign({}, realData, {
+            examId: canonicalExamId || realData?.examId || examId,
+            dataKey: realData?.dataKey || canonicalExamId || examId,
+            derivedExamId: realData?.derivedExamId || canonicalExamId || examId,
+            metadata: Object.assign({}, realData?.metadata || {}, {
+                examId: canonicalExamId || realData?.metadata?.examId || examId,
+                dataKey: realData?.metadata?.dataKey || realData?.dataKey || canonicalExamId || examId,
+                derivedExamId: realData?.metadata?.derivedExamId || realData?.derivedExamId || canonicalExamId || examId
+            })
+        });
+        const record = await api.saveCompletion(completionPayload, {
+            examId: canonicalExamId || examId,
+            dataKey: completionPayload.dataKey,
             examEntry: exam,
             metadata: {
-                examId,
+                examId: canonicalExamId || examId,
+                dataKey: completionPayload.dataKey,
+                derivedExamId: completionPayload.derivedExamId,
                 examTitle: exam.title || realData.title || '',
                 category,
                 frequency: exam.frequency || realData.frequency || 'unknown',
@@ -1159,7 +2069,11 @@ async function savePracticeCompletionRecord(examId, realData) {
             updateStats: true
         });
 
-        await saveFallbackSpellingErrors(examId, realData, exam);
+        await saveFallbackSpellingErrors(canonicalExamId || examId, completionPayload, exam);
+        const completionSessionId = record?.sessionId || realData?.sessionId || realData?.metadata?.sessionId || null;
+        if (completionSessionId && record?.id) {
+            completedPracticeRecordIdsBySession.set(completionSessionId, record.id);
+        }
         console.log('[PracticeRecord] 练习完成数据已保存到 canonical store');
         return record;
     } catch (e) {
@@ -1663,6 +2577,134 @@ function recordMatchesExamType(record, targetType, examIndex) {
     return true;
 }
 
+function formatWrongReasonText(reason) {
+    if (!reason) {
+        return '';
+    }
+    if (typeof reason === 'string') {
+        return reason.trim();
+    }
+    if (typeof reason === 'object') {
+        const category = typeof reason.category === 'string' ? reason.category.trim() : '';
+        const note = typeof reason.note === 'string' ? reason.note.trim() : '';
+        return [category, note].filter(Boolean).join('：');
+    }
+    return String(reason).trim();
+}
+
+function getWrongReasonForQuestion(record, key, entry) {
+    const rawMap = record && record.wrongReasons && typeof record.wrongReasons === 'object'
+        ? record.wrongReasons
+        : {};
+    const displayNumber = entry && (entry.displayNumber || entry.questionNumber || entry.number);
+    const candidates = [
+        entry && entry.wrongReason,
+        entry && entry.errorReason,
+        entry && entry.wrongReasonNote,
+        rawMap[key],
+        displayNumber != null ? rawMap[`q${displayNumber}`] : null,
+        displayNumber != null ? rawMap[String(displayNumber)] : null
+    ];
+    for (const candidate of candidates) {
+        const text = formatWrongReasonText(candidate);
+        if (text) {
+            return { raw: candidate, text };
+        }
+    }
+    return null;
+}
+
+function getPracticeWrongReasonSummary(records) {
+    const summary = {
+        incorrect: 0,
+        tagged: 0,
+        categories: new Map()
+    };
+    const list = Array.isArray(records) ? records : [];
+
+    list.forEach((record) => {
+        if (!record) {
+            return;
+        }
+        const maps = [
+            record.answerComparison,
+            record.answerDetails,
+            record.scoreInfo && record.scoreInfo.details,
+            record.realData && record.realData.answerComparison,
+            record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details
+        ].filter((map) => map && typeof map === 'object');
+        const seen = new Set();
+
+        maps.forEach((map) => {
+            Object.entries(map).forEach(([key, entry]) => {
+                if (!entry || typeof entry !== 'object') {
+                    return;
+                }
+                const questionKey = String(key);
+                if (seen.has(questionKey) || entry.isCorrect !== false) {
+                    return;
+                }
+                seen.add(questionKey);
+                summary.incorrect += 1;
+
+                const reason = getWrongReasonForQuestion(record, questionKey, entry);
+                if (reason && reason.text) {
+                    summary.tagged += 1;
+                    const label = formatWrongReasonText(reason.raw && typeof reason.raw === 'object'
+                        ? reason.raw.category || reason.raw.note
+                        : reason.raw) || reason.text;
+                    summary.categories.set(label, (summary.categories.get(label) || 0) + 1);
+                }
+            });
+        });
+
+        Object.entries(record.wrongReasons || {}).forEach(([, reason]) => {
+            const label = formatWrongReasonText(reason && typeof reason === 'object'
+                ? reason.category || reason.note
+                : reason);
+            if (label && summary.incorrect === 0) {
+                summary.tagged += 1;
+                summary.categories.set(label, (summary.categories.get(label) || 0) + 1);
+            }
+        });
+    });
+
+    return summary;
+}
+
+function updateWrongReasonReview(records) {
+    const panel = document.getElementById('wrong-reason-review');
+    if (!panel) {
+        return;
+    }
+    const summaryNode = document.getElementById('wrong-reason-review-summary');
+    const tagsNode = document.getElementById('wrong-reason-review-tags');
+    const summary = getPracticeWrongReasonSummary(records);
+    const pending = Math.max(summary.incorrect - summary.tagged, 0);
+
+    if (summaryNode) {
+        summaryNode.textContent = `错因 ${summary.tagged} / 错题 ${summary.incorrect}`;
+    }
+
+    if (tagsNode) {
+        tagsNode.innerHTML = '';
+        const pendingChip = document.createElement('span');
+        pendingChip.className = 'wrong-reason-chip';
+        pendingChip.textContent = `待标 ${pending}`;
+        tagsNode.appendChild(pendingChip);
+
+        Array.from(summary.categories.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 6)
+            .forEach(([label, count]) => {
+                const chip = document.createElement('span');
+                chip.className = 'wrong-reason-chip';
+                chip.textContent = `${label} ${count}`;
+                tagsNode.appendChild(chip);
+            });
+    }
+}
+
 // Phase 3: 练习记录视图更新 - 保留在 main.js（依赖多个组件，暂不迁移）
 function updatePracticeView() {
     const rawRecords = getPracticeRecordsState();
@@ -1732,6 +2774,8 @@ function updatePracticeView() {
     if (priorityRenderer && typeof priorityRenderer.update === 'function') {
         priorityRenderer.update(recordsForInsights, getExamIndexState(), { examType });
     }
+
+    updateWrongReasonReview(recordsToShow);
 
     // --- 4. Render history list ---
     const renderer = window.PracticeHistoryRenderer;
@@ -1833,7 +2877,47 @@ function computePracticeSummaryFallback(records) {
     const totalPracticed = normalized.length;
     let totalScore = 0;
     let totalDuration = 0;
+    let knownDurationCount = 0;
     const dateStrings = [];
+    const formatLocalDateKey = (date) => {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+            return null;
+        }
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+    const parseLocalDateKey = (dateKey) => {
+        const parts = String(dateKey || '').split('-').map((part) => Number(part));
+        if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
+            return null;
+        }
+        return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+
+    const getRecordDateForSummary = (record) => {
+        if (typeof getRecordTimestamp === 'function') {
+            const timestamp = getRecordTimestamp(record);
+            if (timestamp > 0) {
+                return new Date(timestamp);
+            }
+        }
+        const candidates = [
+            record && record.date,
+            record && record.completedAt,
+            record && record.endTime,
+            record && record.startTime,
+            record && record.createdAt
+        ];
+        for (const value of candidates) {
+            const time = new Date(value);
+            if (!Number.isNaN(time.getTime())) {
+                return time;
+            }
+        }
+        return null;
+    };
 
     normalized.forEach((record) => {
         if (!record) {
@@ -1842,31 +2926,38 @@ function computePracticeSummaryFallback(records) {
         const percentage = typeof record.percentage === 'number' ? record.percentage : (typeof record.accuracy === 'number' ? Math.round(record.accuracy * 100) : 0);
         const duration = typeof record.duration === 'number' ? record.duration : 0;
         totalScore += percentage;
-        totalDuration += duration;
+        if (duration > 0 || !(record.durationUnknown || record.timePrecision === 'date-only' || record.source === 'markdown-recovery' || record.recoveredFrom)) {
+            totalDuration += duration;
+            knownDurationCount += 1;
+        }
 
-        if (record.date) {
-            const time = new Date(record.date);
-            if (!Number.isNaN(time.getTime())) {
-                dateStrings.push(time.toDateString());
+        const practiceDate = getRecordDateForSummary(record);
+        if (practiceDate) {
+            const localDateKey = formatLocalDateKey(practiceDate);
+            if (localDateKey) {
+                dateStrings.push(localDateKey);
             }
         }
     });
 
-    const uniqueDates = Array.from(new Set(dateStrings)).sort((a, b) => new Date(b) - new Date(a));
+    const uniqueDates = Array.from(new Set(dateStrings)).sort((a, b) => parseLocalDateKey(b) - parseLocalDateKey(a));
     let streak = 0;
     if (uniqueDates.length > 0) {
         const today = new Date();
-        const yesterday = new Date();
-        yesterday.setDate(today.getDate() - 1);
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-        const firstDate = new Date(uniqueDates[0]);
-        if (firstDate.toDateString() === today.toDateString() || firstDate.toDateString() === yesterday.toDateString()) {
+        const firstDate = parseLocalDateKey(uniqueDates[0]);
+        const diffFromToday = firstDate ? Math.round((todayStart - firstDate) / (1000 * 60 * 60 * 24)) : Infinity;
+        if (diffFromToday >= 0 && diffFromToday <= 1) {
             streak = 1;
             for (let i = 0; i < uniqueDates.length - 1; i += 1) {
-                const currentDay = new Date(uniqueDates[i]);
-                const nextDay = new Date(uniqueDates[i + 1]);
+                const currentDay = parseLocalDateKey(uniqueDates[i]);
+                const nextDay = parseLocalDateKey(uniqueDates[i + 1]);
+                if (!currentDay || !nextDay) {
+                    break;
+                }
                 const diffTime = currentDay - nextDay;
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
                 if (diffDays === 1) {
                     streak += 1;
                 } else {
@@ -1880,6 +2971,7 @@ function computePracticeSummaryFallback(records) {
         totalPracticed,
         averageScore: totalPracticed > 0 ? totalScore / totalPracticed : 0,
         totalStudyMinutes: totalDuration / 60,
+        durationUnknown: totalPracticed > 0 && knownDurationCount === 0,
         streak
     };
 }
@@ -1904,13 +2996,29 @@ function applyPracticeSummaryFallback(summary) {
     const timeEl = document.getElementById('study-time');
     if (timeEl) {
         const minutes = typeof summary.totalStudyMinutes === 'number' ? summary.totalStudyMinutes : 0;
-        timeEl.textContent = Math.round(minutes).toString();
+        timeEl.textContent = summary.durationUnknown ? '未记录' : formatPracticeSummaryDuration(minutes);
     }
 
     const streakEl = document.getElementById('streak-days');
     if (streakEl) {
         streakEl.textContent = typeof summary.streak === 'number' ? summary.streak : 0;
     }
+}
+
+function formatPracticeSummaryDuration(minutes) {
+    if (typeof minutes !== 'number' || Number.isNaN(minutes)) {
+        return '0分钟';
+    }
+    const totalMinutes = Math.max(0, Math.round(minutes));
+    const hours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = totalMinutes % 60;
+    if (hours > 0 && remainingMinutes > 0) {
+        return `${hours}小时${remainingMinutes}分钟`;
+    }
+    if (hours > 0) {
+        return `${hours}小时`;
+    }
+    return `${totalMinutes}分钟`;
 }
 
 

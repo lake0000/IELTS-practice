@@ -100,6 +100,22 @@
         return normalized;
     }
 
+    function normalizeWrongReason(value) {
+        var source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        var category = normalizeValue(source.category ?? source.reason ?? source.type);
+        var note = normalizeValue(source.note ?? source.detail ?? source.text);
+        if (!category && !note) {
+            return null;
+        }
+        return {
+            category: category,
+            note: note,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
     function sanitizeComparisonMap(comparisonMap) {
         if (!comparisonMap || typeof comparisonMap !== 'object') {
             return {};
@@ -131,6 +147,10 @@
             if (hasMeaningfulValue(canonicalAnswer)) {
                 sanitized[key].canonicalAnswer = canonicalAnswer;
             }
+            var wrongReason = normalizeWrongReason(entry.wrongReason ?? entry.errorReason ?? entry.wrongReasonNote);
+            if (wrongReason) {
+                sanitized[key].wrongReason = wrongReason;
+            }
         });
         return sanitized;
     }
@@ -139,6 +159,7 @@
         normalizeValue: normalizeValue,
         hasMeaningfulValue: hasMeaningfulValue,
         normalizeValueList: normalizeValueList,
+        normalizeWrongReason: normalizeWrongReason,
         sanitizeComparisonMap: sanitizeComparisonMap
     };
 

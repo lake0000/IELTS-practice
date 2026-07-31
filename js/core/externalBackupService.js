@@ -21,6 +21,8 @@
     var STORE_NAME = 'handles';
     var HANDLE_KEY = 'backup_directory';
     var LATEST_FILENAME = 'practice-backup-latest.json';
+    var LOCAL_BACKUP_BRIDGE_URL = '/api/external-backup/latest';
+    var LOCAL_BACKUP_BRIDGE_EXPECTED_PATH = 'E:\\hnu\\雅思\\备份zyz';
     var DAY_MS = 24 * 60 * 60 * 1000;
     var STALE_WRITE_MS = DAY_MS;
     var REMIND_BANNER_ID = 'external-backup-remind-banner';
@@ -351,6 +353,18 @@
             }
 
             var snapshot = await captureSnapshot();
+            var recordCount = countBackupPracticeRecords(snapshot);
+            if (recordCount === 0 && opts.allowEmptySnapshot !== true) {
+                writeMeta({
+                    lastWriteOk: false,
+                    lastWriteError: 'empty_snapshot_refused'
+                });
+                return {
+                    success: false,
+                    reason: 'empty_snapshot_refused',
+                    recordCount: 0
+                };
+            }
             var doc = buildExportDocument(snapshot);
             var text = JSON.stringify(doc, null, 2);
             var hash = stableHash(doc.data);
@@ -369,10 +383,6 @@
                     console.warn('[ExternalBackup] dated copy failed:', datedError);
                 }
             }
-
-            var recordCount = Array.isArray(snapshot.practice_records)
-                ? snapshot.practice_records.length
-                : (Array.isArray(snapshot.practiceRecords) ? snapshot.practiceRecords.length : 0);
 
             state.lastSnapshotHash = hash;
             state.dirty = false;
@@ -532,6 +542,28 @@
                 return Array.isArray(list) ? list.length : 0;
             }
         } catch (_) { /* ignore */ }
+        var keys = ['practice_records', 'exam_system_practice_records'];
+        for (var i = 0; i < keys.length; i += 1) {
+            try {
+                if (global.storage && typeof global.storage.get === 'function') {
+                    var stored = await global.storage.get(keys[i], null);
+                    var storedCount = countBackupPracticeRecords({ practice_records: stored });
+                    if (storedCount > 0) {
+                        return storedCount;
+                    }
+                }
+            } catch (_) { /* ignore */ }
+            try {
+                var raw = global.localStorage && global.localStorage.getItem(keys[i]);
+                if (raw) {
+                    var parsed = JSON.parse(raw);
+                    var localCount = countBackupPracticeRecords({ practice_records: parsed });
+                    if (localCount > 0) {
+                        return localCount;
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        }
         return 0;
     }
 
@@ -549,6 +581,243 @@
         } catch (_) {
             return false;
         }
+    }
+
+    async function readLatestBackupPayload() {
+        if (!state.directoryHandle) {
+            return null;
+        }
+        var permitted = await ensurePermission(state.directoryHandle, false);
+        if (!permitted) {
+            return null;
+        }
+        var fileHandle = await state.directoryHandle.getFileHandle(LATEST_FILENAME, { create: false });
+        var file = await fileHandle.getFile();
+        var text = await file.text();
+        var payload = JSON.parse(text);
+        return payload && payload.data ? payload.data : payload;
+    }
+
+    function countBackupPracticeRecords(payload) {
+        if (!payload || typeof payload !== 'object') {
+            return 0;
+        }
+        if (Array.isArray(payload.practice_records)) {
+            return payload.practice_records.length;
+        }
+        if (payload.practice_records && Array.isArray(payload.practice_records.data)) {
+            return payload.practice_records.data.length;
+        }
+        if (Array.isArray(payload.practiceRecords)) {
+            return payload.practiceRecords.length;
+        }
+        if (payload.practiceRecords && Array.isArray(payload.practiceRecords.data)) {
+            return payload.practiceRecords.data.length;
+        }
+        if (payload.exam_system_practice_records && Array.isArray(payload.exam_system_practice_records.data)) {
+            return payload.exam_system_practice_records.data.length;
+        }
+        if (payload.data && payload.data.exam_system_practice_records && Array.isArray(payload.data.exam_system_practice_records.data)) {
+            return payload.data.exam_system_practice_records.data.length;
+        }
+        return 0;
+    }
+
+    function getBackupPracticeRecords(payload) {
+        if (!payload || typeof payload !== 'object') {
+            return [];
+        }
+        if (payload.data && typeof payload.data === 'object') {
+            return getBackupPracticeRecords(payload.data);
+        }
+        if (Array.isArray(payload.practice_records)) {
+            return payload.practice_records;
+        }
+        if (payload.practice_records && Array.isArray(payload.practice_records.data)) {
+            return payload.practice_records.data;
+        }
+        if (Array.isArray(payload.practiceRecords)) {
+            return payload.practiceRecords;
+        }
+        if (payload.practiceRecords && Array.isArray(payload.practiceRecords.data)) {
+            return payload.practiceRecords.data;
+        }
+        if (payload.exam_system_practice_records && Array.isArray(payload.exam_system_practice_records.data)) {
+            return payload.exam_system_practice_records.data;
+        }
+        if (payload.data && payload.data.exam_system_practice_records && Array.isArray(payload.data.exam_system_practice_records.data)) {
+            return payload.data.exam_system_practice_records.data;
+        }
+        return [];
+    }
+
+    function getRecordTimestamp(record) {
+        var candidates = [
+            record && record.updatedAt,
+            record && record.endTime,
+            record && record.date,
+            record && record.startTime,
+            record && record.timestamp
+        ];
+        for (var i = 0; i < candidates.length; i += 1) {
+            var time = candidates[i] ? new Date(candidates[i]).getTime() : NaN;
+            if (Number.isFinite(time)) {
+                return time;
+            }
+        }
+        return 0;
+    }
+
+    function getLatestRecordTimestamp(records) {
+        if (!Array.isArray(records) || records.length === 0) {
+            return 0;
+        }
+        return records.reduce(function (latest, record) {
+            return Math.max(latest, getRecordTimestamp(record));
+        }, 0);
+    }
+
+    async function readCurrentPracticeRecords() {
+        if (global.PracticeRecordAPI && typeof global.PracticeRecordAPI.list === 'function') {
+            var list = await global.PracticeRecordAPI.list();
+            return Array.isArray(list) ? list : [];
+        }
+        return [];
+    }
+
+    function canUseLocalBackupBridge() {
+        try {
+            var host = global.location && global.location.hostname;
+            return host === '127.0.0.1' || host === 'localhost';
+        } catch (_) {
+            return false;
+        }
+    }
+
+    async function readLocalBackupBridgePayload() {
+        if (!canUseLocalBackupBridge() || typeof global.fetch !== 'function') {
+            return null;
+        }
+        try {
+            var response = await global.fetch(LOCAL_BACKUP_BRIDGE_URL, { cache: 'no-store' });
+            if (!response || !response.ok) {
+                return null;
+            }
+            var body = await response.json();
+            if (!body || body.ok !== true || !body.payload) {
+                return null;
+            }
+            var data = body.payload && body.payload.data ? body.payload.data : body.payload;
+            return {
+                data: data,
+                backupDir: body.backupDir || LOCAL_BACKUP_BRIDGE_EXPECTED_PATH,
+                filename: body.filename || LATEST_FILENAME,
+                mtime: body.mtime || null,
+                bytes: body.bytes || 0
+            };
+        } catch (error) {
+            console.warn('[ExternalBackup] local backup bridge read failed:', error);
+            return null;
+        }
+    }
+
+    async function maybeLoadLocalBridgeLatest(options) {
+        var opts = options || {};
+        await ensureReady();
+        if (!global.BackupAPI || typeof global.BackupAPI.restorePayload !== 'function') {
+            return { success: false, reason: 'backup_api_not_ready' };
+        }
+        if (!global.PracticeRecordAPI || typeof global.PracticeRecordAPI.list !== 'function') {
+            return { success: false, reason: 'practice_api_not_ready' };
+        }
+
+        var bridge = await readLocalBackupBridgePayload();
+        if (!bridge || !bridge.data) {
+            return { success: false, reason: 'bridge_unavailable' };
+        }
+
+        var backupRecords = getBackupPracticeRecords(bridge.data);
+        var backupCount = backupRecords.length;
+        if (backupCount === 0) {
+            return { success: false, reason: 'empty_backup_refused' };
+        }
+
+        var currentRecords = await readCurrentPracticeRecords();
+        var currentCount = currentRecords.length;
+        var backupLatest = getLatestRecordTimestamp(backupRecords);
+        var currentLatest = getLatestRecordTimestamp(currentRecords);
+        var shouldImport = currentCount === 0
+            || backupCount > currentCount
+            || backupLatest > currentLatest + 1000
+            || opts.force === true;
+
+        if (!shouldImport) {
+            writeMeta({
+                localBridgePath: bridge.backupDir || LOCAL_BACKUP_BRIDGE_EXPECTED_PATH,
+                localBridgeLastCheckAt: nowIso(),
+                localBridgeLastResult: 'skipped_current_is_newer_or_equal'
+            });
+            return {
+                success: true,
+                skipped: true,
+                reason: 'current_is_newer_or_equal',
+                backupCount: backupCount,
+                currentCount: currentCount
+            };
+        }
+
+        if (currentCount > 0 && typeof global.PracticeRecordAPI.mergeRecords !== 'function') {
+            return { success: false, reason: 'merge_api_not_ready' };
+        }
+
+        try {
+            if (currentCount > 0 && global.BackupAPI && typeof global.BackupAPI.create === 'function') {
+                await global.BackupAPI.create({ type: 'pre_local_bridge_import' });
+            }
+        } catch (backupError) {
+            console.warn('[ExternalBackup] pre local bridge import backup failed:', backupError);
+        }
+
+        if (currentCount === 0) {
+            await global.BackupAPI.restorePayload(bridge.data, { interactive: false });
+        } else {
+            await global.PracticeRecordAPI.mergeRecords(backupRecords, {
+                updateStats: true,
+                preserveIds: true,
+                mergeMode: 'merge'
+            });
+        }
+
+        writeMeta({
+            enabled: true,
+            directoryName: '备份zyz',
+            localBridgePath: bridge.backupDir || LOCAL_BACKUP_BRIDGE_EXPECTED_PATH,
+            localBridgeLastCheckAt: nowIso(),
+            localBridgeLastImportAt: nowIso(),
+            localBridgeLastResult: currentCount === 0 ? 'restored_empty_store' : 'merged_records',
+            recordCountAtLastWrite: Math.max(currentCount, backupCount)
+        });
+
+        try {
+            global.dispatchEvent(new CustomEvent('practiceRecordsUpdated', {
+                detail: { source: 'local-backup-bridge-import' }
+            }));
+        } catch (_) { /* ignore */ }
+        if (opts.notify !== false) {
+            notify(
+                currentCount === 0
+                    ? ('已自动从本地备份加载 ' + backupCount + ' 条练习记录')
+                    : ('已自动合并本地备份记录（备份 ' + backupCount + ' 条）'),
+                'success'
+            );
+        }
+        return {
+            success: true,
+            skipped: false,
+            reason: currentCount === 0 ? 'restored_empty_store' : 'merged_records',
+            backupCount: backupCount,
+            currentCount: currentCount
+        };
     }
 
     function buildReminder(status) {
@@ -723,6 +992,8 @@
                     notify('仍未获得文件夹权限，请在浏览器弹窗中允许访问', 'warning');
                 } else if (result.reason === 'unbound') {
                     notify('尚未绑定备份文件夹', 'warning');
+                } else if (result.reason === 'empty_snapshot_refused') {
+                    notify('当前练习记录为空，已拒绝覆盖本地备份', 'warning');
                 } else {
                     notify('写入失败：' + (result.error && result.error.message ? result.error.message : result.reason), 'error');
                 }
@@ -811,6 +1082,23 @@
         if (!readable) {
             return false;
         }
+        var latestPayload = null;
+        var latestCount = 0;
+        try {
+            latestPayload = await readLatestBackupPayload();
+            latestCount = countBackupPracticeRecords(latestPayload);
+        } catch (error) {
+            console.warn('[ExternalBackup] latest backup preview failed:', error);
+        }
+        if (!latestCount) {
+            await new Promise(function (resolve) { global.setTimeout(resolve, 800); });
+            var refreshedCount = await countPracticeRecords();
+            if (refreshedCount > 0) {
+                return false;
+            }
+            notify('本地备份文件可读，但里面没有练习记录，已停止自动恢复。', 'warning');
+            return false;
+        }
 
         var meta = state.meta || readMeta();
         var today = dayKey(new Date());
@@ -824,7 +1112,7 @@
         try {
             ok = global.confirm(
                 '检测到浏览器内练习记录为空，但本地备份文件夹「' + dirName +
-                '」中有 ' + LATEST_FILENAME + '。是否立即恢复？'
+                '」中有 ' + LATEST_FILENAME + '，包含 ' + latestCount + ' 条练习记录。是否立即恢复？'
             );
         } catch (_) {
             ok = false;
@@ -833,7 +1121,11 @@
             return false;
         }
         try {
-            await restoreFromLatest({ interactive: true });
+            if (global.BackupAPI && typeof global.BackupAPI.restorePayload === 'function' && latestPayload) {
+                await global.BackupAPI.restorePayload(latestPayload, { interactive: true });
+            } else {
+                await restoreFromLatest({ interactive: true });
+            }
             notify('已从本地备份文件夹恢复数据', 'success');
             try {
                 if (typeof global.updateOverview === 'function') {
@@ -941,6 +1233,10 @@
     var ENTRY_ID = 'external-backup-entry-btn';
     var MODAL_ID = 'external-backup-modal';
     var modalBound = false;
+
+    function isMainAppShell() {
+        return Boolean(global.document && global.document.getElementById('settings-view'));
+    }
 
     function getModal() {
         return global.document ? global.document.getElementById(MODAL_ID) : null;
@@ -1143,6 +1439,8 @@
                     notify('请先绑定备份文件夹', 'warning');
                 } else if (result.reason === 'permission_denied') {
                     notify('需要允许文件夹访问权限', 'warning');
+                } else if (result.reason === 'empty_snapshot_refused') {
+                    notify('当前练习记录为空，已拒绝覆盖本地备份', 'warning');
                 } else {
                     notify('写入失败：' + (result.error && result.error.message ? result.error.message : result.reason), 'error');
                 }
@@ -1243,8 +1541,14 @@
 
     function ensurePanelDom() {
         // Compact entry on settings page + secondary modal body.
-        ensureEntryButton();
-        var modal = ensureModalDom();
+        var entry = ensureEntryButton();
+        var modal = getModal();
+        if (!entry && !modal) {
+            return null;
+        }
+        if (!modal) {
+            modal = ensureModalDom();
+        }
         return modal ? modal.querySelector('#external-backup-panel') : null;
     }
 
@@ -1332,12 +1636,18 @@
 
     async function init() {
         await ensureReady();
+        if (!isMainAppShell()) {
+            return true;
+        }
         ensurePanelDom();
         refreshExternalBackupPanel();
         await requestPersistentStorage();
 
-        // Daily reminder + empty-store recovery (deferred so PracticeRecordAPI can boot)
+        // Daily reminder + local bridge recovery (deferred so PracticeRecordAPI can boot)
         global.setTimeout(function () {
+            maybeLoadLocalBridgeLatest({ notify: false }).catch(function (error) {
+                console.warn('[ExternalBackup] local bridge auto load failed:', error);
+            });
             maybeShowDailyReminder({ render: true }).catch(function (error) {
                 console.warn('[ExternalBackup] daily reminder failed:', error);
             });
@@ -1381,6 +1691,7 @@
         },
         restoreFromLatest: restoreFromLatest,
         pickAndRestoreFile: pickAndRestoreFile,
+        maybeLoadLocalBridgeLatest: maybeLoadLocalBridgeLatest,
         getStatus: getStatus,
         formatStatusText: formatStatusText,
         maybeShowDailyReminder: maybeShowDailyReminder,

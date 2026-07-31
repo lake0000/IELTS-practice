@@ -37,6 +37,109 @@
 
     installRecordStore();
 
+    let backendSeedPromise = null;
+    let backendSeedChecked = false;
+
+    function getSqliteBackend() {
+        const backend = global.SqlitePracticeBackend;
+        return backend && backend.__stable === true ? backend : null;
+    }
+
+    async function getAvailableSqliteBackend(options = {}) {
+        const backend = getSqliteBackend();
+        if (!backend || typeof backend.isAvailable !== 'function') {
+            return null;
+        }
+        try {
+            return await backend.isAvailable(options) ? backend : null;
+        } catch (error) {
+            console.warn('[SqliteBackend] status failed, fallback to browser storage:', error);
+            return null;
+        }
+    }
+
+    function syncPracticeRecordState(records) {
+        const store = getRecordStore();
+        if (store && typeof store.syncPracticeRecordState === 'function') {
+            try {
+                store.syncPracticeRecordState(Array.isArray(records) ? records : []);
+            } catch (error) {
+                console.warn('[SqliteBackend] sync state failed:', error);
+            }
+        }
+    }
+
+    async function seedSqliteBackendFromLocalIfNeeded(backend) {
+        if (!backend || backendSeedChecked) {
+            return;
+        }
+        if (!backendSeedPromise) {
+            backendSeedPromise = (async () => {
+                const store = getRecordStore();
+                if (!store || typeof store.listPracticeRecords !== 'function') {
+                    backendSeedChecked = true;
+                    return;
+                }
+                let backendCount = null;
+                try {
+                    backendCount = typeof backend.count === 'function'
+                        ? await backend.count()
+                        : null;
+                } catch (error) {
+                    console.warn('[SqliteBackend] count failed:', error);
+                    backendSeedChecked = true;
+                    return;
+                }
+                if (Number(backendCount) > 0) {
+                    backendSeedChecked = true;
+                    return;
+                }
+                let localRecords = [];
+                try {
+                    localRecords = await store.listPracticeRecords();
+                } catch (error) {
+                    console.warn('[SqliteBackend] local seed read failed:', error);
+                }
+                if (!Array.isArray(localRecords) || localRecords.length === 0) {
+                    backendSeedChecked = true;
+                    return;
+                }
+                const localStats = store && typeof store.readMeta === 'function'
+                    ? await store.readMeta('user_stats', null).catch(() => null)
+                    : null;
+                await backend.replace(localRecords, { maxRecords: DEFAULT_MAX_RECORDS });
+                if (isPlainObject(localStats) && hasMeaningfulStats(localStats)) {
+                    await backend.writeMeta('user_stats', localStats);
+                }
+                console.info('[SqliteBackend] seeded from browser records:', {
+                    recordCount: localRecords.length,
+                    statsSeeded: isPlainObject(localStats)
+                });
+                backendSeedChecked = true;
+            })().finally(() => {
+                backendSeedPromise = null;
+            });
+        }
+        await backendSeedPromise;
+    }
+
+    async function withSqliteBackend(operation, fallback, options = {}) {
+        const backend = await getAvailableSqliteBackend(options.status || {});
+        if (!backend) {
+            return await fallback();
+        }
+        try {
+            await seedSqliteBackendFromLocalIfNeeded(backend);
+            const result = await operation(backend);
+            if (result !== null && result !== undefined) {
+                return result;
+            }
+        } catch (error) {
+            console.warn('[SqliteBackend] operation failed, fallback to browser storage:', error);
+        }
+        return await fallback();
+    }
+
     function getDefaultSaveOptions(options = {}) {
         const source = options && typeof options === 'object' ? options : {};
         const normalized = {
@@ -79,6 +182,241 @@
             clone[key] = clonePlainObject(value[key]);
         });
         return clone;
+    }
+
+    function normalizeWrongReason(value) {
+        const source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        const category = source.category ?? source.reason ?? source.type;
+        const note = source.note ?? source.detail ?? source.text;
+        const normalizedCategory = category == null ? '' : String(category).trim();
+        const normalizedNote = note == null ? '' : String(note).trim();
+        if (!normalizedCategory && !normalizedNote) {
+            return null;
+        }
+        return {
+            category: normalizedCategory,
+            note: normalizedNote,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
+    function normalizeWrongReasonMap(value) {
+        if (!value || typeof value !== 'object') {
+            return {};
+        }
+        const normalized = {};
+        Object.entries(value).forEach(([questionId, reason]) => {
+            const normalizedReason = normalizeWrongReason(reason);
+            if (normalizedReason) {
+                normalized[questionId] = normalizedReason;
+            }
+        });
+        return normalized;
+    }
+
+    function isWrongReasonFallbackRecord(record) {
+        return Boolean(
+            record && typeof record === 'object'
+            && (
+                record.source === 'wrong-reason-fallback'
+                || record.metadata?.source === 'wrong-reason-fallback'
+                || record.realData?.source === 'wrong-reason-fallback'
+            )
+        );
+    }
+
+    function deriveExamIdFromSessionId(value) {
+        const text = String(value || '').trim();
+        if (!text) {
+            return '';
+        }
+        const match = text.match(/^([pc]\d-(?:low|medium|high)-\d+)(?:_|$)/i);
+        return match ? match[1] : '';
+    }
+
+    function getRecordExamId(record = {}) {
+        const metadata = record.metadata || {};
+        const realData = record.realData || {};
+        return String(
+            record.examId
+            || record.dataKey
+            || record.derivedExamId
+            || metadata.examId
+            || metadata.dataKey
+            || metadata.derivedExamId
+            || realData.examId
+            || realData.dataKey
+            || realData.derivedExamId
+            || deriveExamIdFromSessionId(record.sessionId)
+            || deriveExamIdFromSessionId(record.id)
+            || ''
+        ).trim();
+    }
+
+    function normalizeRecordTitle(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[’‘]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[\s\-_/]+/g, ' ')
+            .replace(/^[pc]\s*[123]\s*(low|medium|high|次高频|高频|中频|低频)?\s*/i, '')
+            .trim();
+    }
+
+    function getRecordTitle(record = {}) {
+        const metadata = record.metadata || {};
+        const realData = record.realData || {};
+        return normalizeRecordTitle(record.title || record.examTitle || metadata.examTitle || metadata.title || realData.title || realData.examTitle || '');
+    }
+
+    function recordsShareWrongReasonIdentity(left, right) {
+        const leftExamId = getRecordExamId(left);
+        const rightExamId = getRecordExamId(right);
+        if (leftExamId && rightExamId && leftExamId === rightExamId) {
+            return true;
+        }
+        const leftTitle = getRecordTitle(left);
+        const rightTitle = getRecordTitle(right);
+        return Boolean(
+            leftTitle
+            && rightTitle
+            && (
+                leftTitle === rightTitle
+                || (leftTitle.length >= 12 && rightTitle.includes(leftTitle))
+                || (rightTitle.length >= 12 && leftTitle.includes(rightTitle))
+            )
+        );
+    }
+
+    function collectWrongReasonsFromRecord(record) {
+        return Object.assign(
+            {},
+            normalizeWrongReasonMap(record && record.wrongReasons),
+            normalizeWrongReasonMap(record && record.realData && record.realData.wrongReasons),
+            normalizeWrongReasonMap(record && record.rawData && record.rawData.wrongReasons)
+        );
+    }
+
+    function recordContainsAnyQuestion(record, questionIds = []) {
+        const ids = questionIds.map(String).filter(Boolean);
+        if (ids.length === 0) {
+            return true;
+        }
+        const maps = [
+            record && record.answerComparison,
+            record && record.answerDetails,
+            record && record.scoreInfo && record.scoreInfo.details,
+            record && record.realData && record.realData.answerComparison,
+            record && record.realData && record.realData.answerDetails,
+            record && record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details,
+            record && record.rawData && record.rawData.answerComparison,
+            record && record.rawData && record.rawData.answerDetails,
+            record && record.rawData && record.rawData.scoreInfo && record.rawData.scoreInfo.details
+        ];
+        return ids.some((questionId) => maps.some((map) => map && typeof map === 'object' && Object.prototype.hasOwnProperty.call(map, questionId)));
+    }
+
+    function getWrongReasonRecordQuality(record) {
+        if (!record || typeof record !== 'object') {
+            return -1000;
+        }
+        const totalQuestions = Number(record.totalQuestions ?? record.scoreInfo?.total ?? record.realData?.totalQuestions ?? record.realData?.scoreInfo?.total ?? 0);
+        const duration = Number(record.duration ?? record.scoreInfo?.duration ?? record.scoreInfo?.timeSpent ?? record.realData?.duration ?? 0);
+        const answerCount = record.answerComparison && typeof record.answerComparison === 'object'
+            ? Object.keys(record.answerComparison).length
+            : 0;
+        let score = isWrongReasonFallbackRecord(record) ? -1000 : 0;
+        if (Number.isFinite(duration) && duration > 0) {
+            score += 100;
+        }
+        if (Number.isFinite(totalQuestions) && totalQuestions > 1) {
+            score += 50;
+        }
+        if (answerCount > 1) {
+            score += 25;
+        }
+        return score;
+    }
+
+    function applyWrongReasonsToExistingRecord(record, incomingReasons) {
+        const next = clonePlainObject(record);
+        const mergedReasons = Object.assign({}, collectWrongReasonsFromRecord(next), incomingReasons || {});
+        next.wrongReasons = mergedReasons;
+        if (next.realData && typeof next.realData === 'object') {
+            next.realData.wrongReasons = Object.assign({}, normalizeWrongReasonMap(next.realData.wrongReasons), mergedReasons);
+        }
+        [next.answerComparison, next.answerDetails, next.scoreInfo && next.scoreInfo.details, next.realData && next.realData.answerComparison, next.realData && next.realData.scoreInfo && next.realData.scoreInfo.details]
+            .forEach((map) => {
+                if (!map || typeof map !== 'object') {
+                    return;
+                }
+                Object.entries(incomingReasons || {}).forEach(([questionId, reason]) => {
+                    if (map[questionId] && typeof map[questionId] === 'object') {
+                        map[questionId].wrongReason = reason;
+                    }
+                });
+            });
+        return next;
+    }
+
+    function mergeWrongReasonFallbackRecords(records) {
+        const source = Array.isArray(records) ? records : [];
+        const fallbackRecords = source.filter(isWrongReasonFallbackRecord);
+        if (fallbackRecords.length === 0) {
+            return source;
+        }
+        const finalRecords = source.filter((record) => !isWrongReasonFallbackRecord(record));
+        fallbackRecords.forEach((fallbackRecord) => {
+            const wrongReasons = collectWrongReasonsFromRecord(fallbackRecord);
+            const questionIds = Object.keys(wrongReasons);
+            if (questionIds.length === 0) {
+                return;
+            }
+            const targetIndex = finalRecords
+                .map((record, index) => ({ record, index }))
+                .filter(({ record }) => recordsShareWrongReasonIdentity(record, fallbackRecord))
+                .sort((a, b) => {
+                    const questionDiff = Number(recordContainsAnyQuestion(b.record, questionIds)) - Number(recordContainsAnyQuestion(a.record, questionIds));
+                    if (questionDiff) {
+                        return questionDiff;
+                    }
+                    const qualityDiff = getWrongReasonRecordQuality(b.record) - getWrongReasonRecordQuality(a.record);
+                    if (qualityDiff) {
+                        return qualityDiff;
+                    }
+                    return getRecordTimestamp(b.record) - getRecordTimestamp(a.record);
+                })[0]?.index;
+            if (targetIndex === undefined) {
+                return;
+            }
+            finalRecords[targetIndex] = applyWrongReasonsToExistingRecord(finalRecords[targetIndex], wrongReasons);
+        });
+        finalRecords.sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a));
+        return finalRecords;
+    }
+
+    async function readLocalWrongReasonFallbackRecords() {
+        const store = getRecordStore();
+        if (!store || typeof store.listPracticeRecords !== 'function') {
+            return [];
+        }
+        try {
+            const records = await store.listPracticeRecords();
+            return (Array.isArray(records) ? records : []).filter(isWrongReasonFallbackRecord);
+        } catch (error) {
+            console.warn('[PracticeRecordAPI] 本地错因占位记录读取失败:', error);
+            return [];
+        }
+    }
+
+    function buildWrongReasonMergeSignature(records) {
+        return JSON.stringify((Array.isArray(records) ? records : []).map((record) => ({
+            id: record && (record.id || record.sessionId || ''),
+            wrongReasons: collectWrongReasonsFromRecord(record)
+        })));
     }
 
     function getDefaultStats() {
@@ -258,24 +596,37 @@
             ? options.fallback
             : getDefaultStats();
 
-        const store = getRecordStore();
-        if (!store || typeof store.readMeta !== 'function') {
-            throw new Error('PracticeRecordAPI.readStats: unified meta store not ready');
-        }
+        return await withSqliteBackend(
+            async (backend) => prepareStats(await backend.readMeta('user_stats', fallback)),
+            async () => {
+                const store = getRecordStore();
+                if (!store || typeof store.readMeta !== 'function') {
+                    throw new Error('PracticeRecordAPI.readStats: unified meta store not ready');
+                }
 
-        return prepareStats(await store.readMeta('user_stats', fallback));
+                return prepareStats(await store.readMeta('user_stats', fallback));
+            }
+        );
     }
 
     async function writeStats(stats) {
         const finalStats = prepareStats(stats);
-        const store = getRecordStore();
+        return await withSqliteBackend(
+            async (backend) => {
+                await backend.writeMeta('user_stats', finalStats);
+                return finalStats;
+            },
+            async () => {
+                const store = getRecordStore();
 
-        if (store && typeof store.writeMeta === 'function') {
-            await store.writeMeta('user_stats', finalStats);
-            return finalStats;
-        }
+                if (store && typeof store.writeMeta === 'function') {
+                    await store.writeMeta('user_stats', finalStats);
+                    return finalStats;
+                }
 
-        throw new Error('PracticeRecordAPI.writeStats: unified meta store not ready');
+                throw new Error('PracticeRecordAPI.writeStats: unified meta store not ready');
+            }
+        );
     }
 
     function normalizeDay(value) {
@@ -300,6 +651,19 @@
             if (diffDays > 1) break;
         }
         return streak;
+    }
+
+    function hasMeaningfulStats(stats) {
+        if (!isPlainObject(stats)) {
+            return false;
+        }
+        if (Number(stats.totalPractices) > 0 || Number(stats.totalTimeSpent) > 0) {
+            return true;
+        }
+        if (Array.isArray(stats.practiceDays) && stats.practiceDays.length > 0) {
+            return true;
+        }
+        return Number(stats.streakDays) > 0 || Number(stats.averageScore) > 0;
     }
 
     function normalizeAccuracyForStats(record) {
@@ -446,13 +810,33 @@
     }
 
     async function list() {
-        const store = getRecordStore();
-        if (!store || typeof store.listPracticeRecords !== 'function') {
-            throw new Error('PracticeRecordAPI.list: unified store not ready');
-        }
+        return await withSqliteBackend(
+            async (backend) => {
+                const records = await backend.list();
+                let finalRecords = mergeWrongReasonFallbackRecords(Array.isArray(records) ? records : []);
+                const localFallbackRecords = await readLocalWrongReasonFallbackRecords();
+                if (localFallbackRecords.length > 0) {
+                    const mergedRecords = mergeWrongReasonFallbackRecords(finalRecords.concat(localFallbackRecords));
+                    if (buildWrongReasonMergeSignature(mergedRecords) !== buildWrongReasonMergeSignature(finalRecords)) {
+                        const savedRecords = await backend.replace(mergedRecords, { maxRecords: DEFAULT_MAX_RECORDS });
+                        finalRecords = Array.isArray(savedRecords) ? savedRecords : mergedRecords;
+                    } else {
+                        finalRecords = mergedRecords;
+                    }
+                }
+                syncPracticeRecordState(finalRecords);
+                return finalRecords;
+            },
+            async () => {
+                const store = getRecordStore();
+                if (!store || typeof store.listPracticeRecords !== 'function') {
+                    throw new Error('PracticeRecordAPI.list: unified store not ready');
+                }
 
-        const records = await store.listPracticeRecords();
-        return Array.isArray(records) ? records : [];
+                const records = await store.listPracticeRecords();
+                return mergeWrongReasonFallbackRecords(Array.isArray(records) ? records : []);
+            }
+        );
     }
 
     /**
@@ -462,29 +846,44 @@
      * 供练习历史列表签名、趋势图、热力图、成就统计等只需时间戳和元数据的消费者使用。
      */
     async function listSummary(options = {}) {
-        const store = getRecordStore();
-        if (!store || typeof store.listPracticeRecordSummaries !== 'function') {
-            // 回退：store 尚未支持 summary 时从完整记录投影
-            const records = await list();
-            return records.map(_projectSummary).filter(Boolean);
-        }
-        const summaries = await store.listPracticeRecordSummaries();
-        return Array.isArray(summaries) ? summaries : [];
+        return await withSqliteBackend(
+            async (backend) => {
+                const summaries = typeof backend.listSummary === 'function' ? await backend.listSummary() : null;
+                return Array.isArray(summaries) ? summaries : null;
+            },
+            async () => {
+                const store = getRecordStore();
+                if (store && typeof store.listPracticeRecords === 'function') {
+                    const records = await store.listPracticeRecords();
+                    return mergeWrongReasonFallbackRecords(records).map(_projectSummary).filter(Boolean);
+                }
+                const records = await list();
+                return records.map(_projectSummary).filter(Boolean);
+            }
+        );
     }
 
     /** 返回记录总数，不加载记录数组到内存 */
     async function count(options = {}) {
-        const store = getRecordStore();
-        if (store && typeof store.countPracticeRecords === 'function') {
-            return await store.countPracticeRecords();
-        }
-        // 回退：store 不支持 count 时从 summary 长度获取
-        if (store && typeof store.listPracticeRecordSummaries === 'function') {
-            const summaries = await store.listPracticeRecordSummaries();
-            return Array.isArray(summaries) ? summaries.length : 0;
-        }
-        const records = await list();
-        return Array.isArray(records) ? records.length : 0;
+        return await withSqliteBackend(
+            async (backend) => {
+                const total = typeof backend.count === 'function' ? await backend.count() : null;
+                return Number.isFinite(Number(total)) ? Number(total) : null;
+            },
+            async () => {
+                const store = getRecordStore();
+                if (store && typeof store.countPracticeRecords === 'function') {
+                    return await store.countPracticeRecords();
+                }
+                // 回退：store 不支持 count 时从 summary 长度获取
+                if (store && typeof store.listPracticeRecordSummaries === 'function') {
+                    const summaries = await store.listPracticeRecordSummaries();
+                    return Array.isArray(summaries) ? summaries.length : 0;
+                }
+                const records = await list();
+                return Array.isArray(records) ? records.length : 0;
+            }
+        );
     }
 
     /** 返回去重后的 examId 列表，供 overview 统计使用 */
@@ -509,25 +908,64 @@
         }
         const scoreInfo = record.scoreInfo || {};
         const metadata = record.metadata || {};
+        const projectComparisonSummary = (source) => {
+            if (!source || typeof source !== 'object') {
+                return null;
+            }
+            const projected = {};
+            Object.entries(source).forEach(([questionId, entry]) => {
+                if (!entry || typeof entry !== 'object') {
+                    return;
+                }
+                const reason = normalizeWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote);
+                projected[questionId] = {
+                    isCorrect: typeof entry.isCorrect === 'boolean' ? entry.isCorrect : null,
+                    questionNumber: entry.questionNumber || entry.displayNumber || entry.number || null,
+                    displayNumber: entry.displayNumber || entry.questionNumber || entry.number || null
+                };
+                if (reason) {
+                    projected[questionId].wrongReason = reason;
+                }
+            });
+            return Object.keys(projected).length ? projected : null;
+        };
+        const projectWrongReasons = (recordLike) => Object.assign(
+            {},
+            normalizeWrongReasonMap(recordLike && recordLike.wrongReasons),
+            normalizeWrongReasonMap(recordLike && recordLike.realData && recordLike.realData.wrongReasons),
+            normalizeWrongReasonMap(recordLike && recordLike.rawData && recordLike.rawData.wrongReasons)
+        );
         // 轻量 suiteEntries 投影：仅保留签名字段，不含 answers/correctAnswerMap/realData
         const rawSuiteEntries = Array.isArray(record.suiteEntries) ? record.suiteEntries : [];
         const suiteEntries = rawSuiteEntries.map(function (entry) {
             if (!entry || typeof entry !== 'object') { return null; }
             const entryMeta = entry.metadata || {};
             const entryScore = entry.scoreInfo || {};
+            const entryWrongReasons = projectWrongReasons(entry);
+            const entryComparison = projectComparisonSummary(
+                entry.answerComparison || (entry.rawData && entry.rawData.answerComparison) || (entryScore && entryScore.details)
+            );
             return {
                 id: entry.id || '',
                 examId: entry.examId || entryMeta.examId || '',
                 title: entry.title || entryMeta.examTitle || '',
                 percentage: Number(entry.percentage != null ? entry.percentage : entryScore.percentage) || 0,
-                duration: Number(entry.duration != null ? entry.duration : (entry.rawData && entry.rawData.duration)) || 0
+                duration: Number(entry.duration != null ? entry.duration : (entry.rawData && entry.rawData.duration)) || 0,
+                wrongReasons: entryWrongReasons,
+                answerComparison: entryComparison
             };
         }).filter(Boolean);
+        const wrongReasons = projectWrongReasons(record);
+        const answerComparison = projectComparisonSummary(
+            record.answerComparison || (record.realData && record.realData.answerComparison) || record.answerDetails || (scoreInfo && scoreInfo.details)
+        );
         return {
             id: record.id || record.sessionId || '',
             sessionId: record.sessionId || null,
             examId: record.examId || metadata.examId || null,
+            dataKey: record.dataKey || metadata.dataKey || null,
             title: record.title || metadata.examTitle || '',
+            source: record.source || null,
             type: record.type || metadata.type || 'reading',
             practiceType: record.practiceType || metadata.practiceType || metadata.examType || null,
             url: record.url || metadata.url || null,
@@ -544,6 +982,8 @@
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
             suiteEntries: suiteEntries,
+            wrongReasons,
+            answerComparison,
             suiteSessionId: record.suiteSessionId || metadata.suiteSessionId || null,
             questionTypePerformance: record.questionTypePerformance || null,
             scoreInfo: {
@@ -563,6 +1003,8 @@
                 examType: metadata.examType || null,
                 practiceType: metadata.practiceType || null,
                 examId: metadata.examId || null,
+                dataKey: metadata.dataKey || null,
+                source: metadata.source || null,
                 title: metadata.title || null,
                 url: metadata.url || null
             },
@@ -575,6 +1017,15 @@
         const targetId = toIdString(recordId);
         if (!targetId) {
             return null;
+        }
+        const backend = await getAvailableSqliteBackend();
+        if (backend) {
+            try {
+                await seedSqliteBackendFromLocalIfNeeded(backend);
+                return typeof backend.getById === 'function' ? await backend.getById(targetId) : null;
+            } catch (error) {
+                console.warn('[SqliteBackend] getById failed, fallback to browser storage:', error);
+            }
         }
         const records = await list();
         return records.find((record) => {
@@ -591,16 +1042,36 @@
         }
         const finalRecords = records;
         const saveOptions = getDefaultSaveOptions(options);
-        const store = getRecordStore();
-        if (store && typeof store.replacePracticeRecords === 'function') {
-            await store.replacePracticeRecords(finalRecords, saveOptions);
-            if (options.updateStats !== false) {
-                await recalculateStats();
-            }
-            return finalRecords;
-        }
+        return await withSqliteBackend(
+            async (backend) => {
+                const normalizedRecords = finalRecords
+                    .map((record, index) => normalizeRecord(record, Object.assign({}, saveOptions, {
+                        preserveIds: options.preserveIds !== false,
+                        fallbackIdPrefix: options.fallbackIdPrefix || 'record',
+                        index
+                    })))
+                    .filter(Boolean);
+                const savedRecords = await backend.replace(normalizedRecords, saveOptions);
+                const resultRecords = Array.isArray(savedRecords) ? savedRecords : normalizedRecords;
+                syncPracticeRecordState(resultRecords);
+                if (options.updateStats !== false) {
+                    await recalculateStats();
+                }
+                return resultRecords;
+            },
+            async () => {
+                const store = getRecordStore();
+                if (store && typeof store.replacePracticeRecords === 'function') {
+                    await store.replacePracticeRecords(finalRecords, saveOptions);
+                    if (options.updateStats !== false) {
+                        await recalculateStats();
+                    }
+                    return finalRecords;
+                }
 
-        throw new Error('PracticeRecordAPI.replace: unified store not ready');
+                throw new Error('PracticeRecordAPI.replace: unified store not ready');
+            }
+        );
     }
 
     async function mergeRecords(records, options = {}) {
@@ -691,9 +1162,12 @@
         if (!Array.isArray(records)) {
             throw new Error('PracticeRecordAPI.restoreRecords requires an array of records');
         }
+        if (records.length === 0 && options.allowEmptyRestore !== true) {
+            throw new Error('PracticeRecordAPI.restoreRecords refused empty restore');
+        }
 
         await replace(records, Object.assign({}, options, { updateStats: false }));
-        if (isPlainObject(options.stats)) {
+        if (isPlainObject(options.stats) && (records.length === 0 || hasMeaningfulStats(options.stats))) {
             await writeStats(options.stats);
         } else if (options.updateStats !== false) {
             await recalculateStats();
@@ -716,6 +1190,33 @@
         const ids = Array.isArray(recordIds) ? recordIds.map(toIdString).filter(Boolean) : [];
         if (ids.length === 0) {
             return { deletedCount: 0, deletedRecords: [], records: await list() };
+        }
+
+        const backendDeleteResult = await withSqliteBackend(
+            async (backend) => {
+                const before = await backend.list();
+                const result = typeof backend.deleteMany === 'function'
+                    ? await backend.deleteMany(ids)
+                    : null;
+                if (!result) {
+                    return null;
+                }
+                const records = Array.isArray(result.records) ? result.records : await backend.list();
+                syncPracticeRecordState(records);
+                if (options.updateStats !== false) {
+                    await recalculateStats();
+                }
+                const idSetForDeleted = new Set(ids);
+                return {
+                    deletedCount: Number(result.deletedCount) || 0,
+                    deletedRecords: (Array.isArray(before) ? before : []).filter((record) => record && idSetForDeleted.has(toIdString(record.id))),
+                    records
+                };
+            },
+            async () => null
+        );
+        if (backendDeleteResult) {
+            return backendDeleteResult;
         }
 
         const idSet = new Set(ids);
@@ -764,22 +1265,35 @@
         }
 
         const saveOptions = getDefaultSaveOptions(options);
-        const store = getRecordStore();
-        if (!store || typeof store.savePracticeRecord !== 'function') {
-            throw new Error('PracticeRecordAPI.saveRecord: PracticeCore store not ready');
-        }
         const normalizedRecord = normalizeRecord(record, saveOptions);
         if (!normalizedRecord || !normalizedRecord.examId) {
             throw new Error('PracticeRecordAPI.saveRecord requires a canonical examId');
         }
 
-        const savedRecord = await store.savePracticeRecord(normalizedRecord, saveOptions);
+        return await withSqliteBackend(
+            async (backend) => {
+                const savedRecord = await backend.saveRecord(normalizedRecord);
+                const finalRecord = savedRecord || normalizedRecord;
+                if (options.updateStats !== false) {
+                    await updateStatsForSavedRecord(finalRecord, options);
+                }
+                return finalRecord;
+            },
+            async () => {
+                const store = getRecordStore();
+                if (!store || typeof store.savePracticeRecord !== 'function') {
+                    throw new Error('PracticeRecordAPI.saveRecord: PracticeCore store not ready');
+                }
 
-        if (options.updateStats !== false) {
-            await updateStatsForSavedRecord(savedRecord, options);
-        }
+                const savedRecord = await store.savePracticeRecord(normalizedRecord, saveOptions);
 
-        return savedRecord;
+                if (options.updateStats !== false) {
+                    await updateStatsForSavedRecord(savedRecord, options);
+                }
+
+                return savedRecord;
+            }
+        );
     }
 
     function fromCompletion(payload, context = {}, examEntry = null, options = {}) {

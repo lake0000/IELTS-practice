@@ -1490,6 +1490,46 @@ class MarkdownExporter {
     }
 
     /**
+     * 导出所有练习记录为 CSV 明细表
+     */
+    exportToCsv() {
+        return new Promise((resolve, reject) => {
+            try {
+                console.log('[MarkdownExporter] 开始导出 CSV 表格');
+                this.showProgressIndicator();
+
+                const timeout = setTimeout(() => {
+                    this.hideProgressIndicator();
+                    reject(new Error('导出超时，请尝试减少数据量'));
+                }, 30000);
+
+                setTimeout(() => {
+                    try {
+                        this.performCsvExport()
+                            .then(result => {
+                                clearTimeout(timeout);
+                                resolve(result);
+                            })
+                            .catch(error => {
+                                clearTimeout(timeout);
+                                this.hideProgressIndicator();
+                                reject(error);
+                            });
+                    } catch (error) {
+                        clearTimeout(timeout);
+                        this.hideProgressIndicator();
+                        reject(error);
+                    }
+                }, 100);
+            } catch (error) {
+                console.error('CSV导出失败:', error);
+                this.hideProgressIndicator();
+                reject(error);
+            }
+        });
+    }
+
+    /**
      * 执行实际的导出操作
      */
     async performExport() {
@@ -1575,6 +1615,49 @@ class MarkdownExporter {
     }
 
     /**
+     * 执行 CSV 明细表导出
+     */
+    async performCsvExport() {
+        try {
+            this.updateProgress('正在加载数据...');
+            await new Promise(resolve => setTimeout(resolve, 10));
+
+            const practiceRecords = await this.getPracticeRecordsUnified();
+            if (practiceRecords.length === 0) {
+                throw new Error('没有练习记录可导出');
+            }
+
+            let examIndex = [];
+            if (this.storage && typeof this.storage.get === 'function') {
+                try {
+                    const idx = await this.storage.get('exam_index', []);
+                    examIndex = Array.isArray(idx) ? idx : [];
+                } catch (_) {
+                    examIndex = [];
+                }
+            }
+            if ((!Array.isArray(examIndex) || examIndex.length === 0) && window.examIndex) {
+                examIndex = Array.isArray(window.examIndex) ? window.examIndex : [];
+            }
+
+            this.updateProgress('正在生成表格...');
+            const recordsByDate = await this.groupRecordsByDateAsync(practiceRecords, examIndex);
+            const csvContent = this.generateCsvContent(recordsByDate);
+
+            this.updateProgress('正在下载文件...');
+            await new Promise(resolve => setTimeout(resolve, 10));
+            this.downloadCsvFile(csvContent);
+
+            this.hideProgressIndicator();
+            return csvContent;
+        } catch (error) {
+            console.error('CSV导出失败:', error);
+            this.hideProgressIndicator();
+            throw error;
+        }
+    }
+
+    /**
      * 批量处理记录以避免阻塞
      */
     async processRecordsInBatches(practiceRecords, manager) {
@@ -1645,10 +1728,10 @@ class MarkdownExporter {
     /**
      * 按日期分组记录（同步版本，保持兼容性）
      */
-    groupRecordsByDate(practiceRecords, examIndex) {
+    groupRecordsByDate(practiceRecords, examIndex = []) {
         const grouped = {};
 
-        practiceRecords.forEach(record => {
+        (Array.isArray(practiceRecords) ? practiceRecords : []).forEach(record => {
             // 获取日期字符串 (YYYY-MM-DD)
             const date = new Date(record.startTime || record.date).toISOString().split('T')[0];
 
@@ -1676,11 +1759,13 @@ class MarkdownExporter {
      * 异步生成 Markdown 内容
      */
     async generateMarkdownContentAsync(recordsByDate) {
-        let markdown = '# 练习记录导出\n\n';
-        markdown += `导出时间: ${new Date().toLocaleString()}\n\n`;
+        recordsByDate = this.normalizeRecordsByDate(recordsByDate);
+        let markdown = '# IELTS 练习记录\n\n';
+        markdown += `导出时间：${new Date().toLocaleString()}\n\n`;
 
         // 按日期排序（最新的在前）
         const sortedDates = Object.keys(recordsByDate).sort((a, b) => b.localeCompare(a));
+        markdown += this.generateSummaryTable(recordsByDate, sortedDates);
 
         // 处理全部日期（当前数据量可承受）
         const datesToProcess = sortedDates;
@@ -1726,11 +1811,13 @@ class MarkdownExporter {
      * 生成 Markdown 内容（同步版本，保持兼容性）
      */
     generateMarkdownContent(recordsByDate) {
-        let markdown = '# 练习记录导出\n\n';
-        markdown += `导出时间: ${new Date().toLocaleString()}\n\n`;
+        recordsByDate = this.normalizeRecordsByDate(recordsByDate);
+        let markdown = '# IELTS 练习记录\n\n';
+        markdown += `导出时间：${new Date().toLocaleString()}\n\n`;
 
         // 按日期排序（最新的在前）
         const sortedDates = Object.keys(recordsByDate).sort((a, b) => b.localeCompare(a));
+        markdown += this.generateSummaryTable(recordsByDate, sortedDates);
 
         for (let i = 0; i < sortedDates.length; i++) {
             const date = sortedDates[i];
@@ -1753,33 +1840,122 @@ class MarkdownExporter {
      * 生成单个记录的 Markdown
      */
     generateRecordMarkdown(record) {
-        const { title, category, frequency } = record;
-        const metadata = record.metadata || {};
-        const displayTitle = this.normalizeTitle(
-            metadata.examTitle
-            || metadata.title
-            || title
-            || record.examId
-            || '未知题目'
-        );
-        const categoryLabel = metadata.category || category || 'Unknown';
-        const frequencyLabel = metadata.frequency || frequency || 'unknown';
+        const display = this.resolveRecordDisplay(record);
         const metrics = this.resolveScoreMetrics(record);
 
-        // 标题行
-        let markdown = `### ${categoryLabel}-${frequencyLabel}-${displayTitle} ${metrics.correct}/${metrics.total} (${metrics.percentage}%)\n\n`;
+        let markdown = `### ${this.cleanAnswerText(display.title, 120)}\n\n`;
+        markdown += '| 项目 | 内容 |\n';
+        markdown += '| ---- | ---- |\n';
+        markdown += `| 日期 | ${display.date} |\n`;
+        markdown += `| 类型 | ${this.cleanAnswerText(display.category, 60)} |\n`;
+        markdown += `| 难度/频率 | ${this.cleanAnswerText(display.frequency, 60)} |\n`;
+        markdown += `| 得分 | ${metrics.correct}/${metrics.total} |\n`;
+        markdown += `| 正确率 | ${metrics.percentage}% |\n`;
+        markdown += `| 完成用时 | ${this.formatRecordDuration(record)} |\n`;
+        markdown += `| 已标错因 | ${this.countWrongReasonRows(record)} |\n\n`;
 
         // 如果有详细答题数据，生成表格
         if (this.hasAnswerDetails(record)) {
             markdown += this.generateAnswerTable(record.realData || {}, record);
         } else {
-            // 如果没有详细数据，显示基本信息
-            markdown += `**分数:** ${metrics.correct}/${metrics.total}\n`;
-            markdown += `**准确率:** ${metrics.percentage}%\n`;
-            markdown += `**用时:** ${record.duration || 0}秒\n`;
+            markdown += '暂无逐题答题明细。\n';
         }
 
         return markdown;
+    }
+
+    generateSummaryTable(recordsByDate, sortedDates = null) {
+        recordsByDate = this.normalizeRecordsByDate(recordsByDate);
+        const dates = sortedDates || Object.keys(recordsByDate).sort((a, b) => b.localeCompare(a));
+        let table = '## 总览\n\n';
+        table += '| 日期 | 题目 | 类型 | 难度/频率 | 得分 | 正确率 | 完成用时 | 已标错因 |\n';
+        table += '| ---- | ---- | ---- | --------- | ---- | ------ | -------- | -------- |\n';
+
+        dates.forEach(date => {
+            (recordsByDate[date] || []).forEach(record => {
+                const display = this.resolveRecordDisplay(record, date);
+                const metrics = this.resolveScoreMetrics(record);
+                table += `| ${display.date} | ${this.cleanAnswerText(display.title, 120)} | ${this.cleanAnswerText(display.category, 60)} | ${this.cleanAnswerText(display.frequency, 60)} | ${metrics.correct}/${metrics.total} | ${metrics.percentage}% | ${this.formatRecordDuration(record)} | ${this.countWrongReasonRows(record)} |\n`;
+            });
+        });
+
+        return `${table}\n`;
+    }
+
+    generateCsvContent(recordsByDate) {
+        recordsByDate = this.normalizeRecordsByDate(recordsByDate);
+        const headers = [
+            '日期',
+            '题目',
+            '类型',
+            '难度/频率',
+            '得分',
+            '总题数',
+            '正确率',
+            '完成用时',
+            '用时秒',
+            '题号',
+            '我的答案',
+            '正确答案',
+            '结果',
+            '错因分类',
+            '错因备注',
+            '记录ID'
+        ];
+        const rows = [headers];
+        const sortedDates = Object.keys(recordsByDate).sort((a, b) => b.localeCompare(a));
+
+        sortedDates.forEach(date => {
+            (recordsByDate[date] || []).forEach(record => {
+                const display = this.resolveRecordDisplay(record, date);
+                const metrics = this.resolveScoreMetrics(record);
+                const answerRows = this.getAnswerRows(record);
+                if (answerRows.length === 0) {
+                    rows.push([
+                        display.date,
+                        display.title,
+                        display.category,
+                        display.frequency,
+                        metrics.correct,
+                        metrics.total,
+                        `${metrics.percentage}%`,
+                        this.formatRecordDuration(record),
+                        this.resolveDurationSeconds(record) ?? '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        record.id || record.sessionId || ''
+                    ]);
+                    return;
+                }
+
+                answerRows.forEach(answer => {
+                    rows.push([
+                        display.date,
+                        display.title,
+                        display.category,
+                        display.frequency,
+                        metrics.correct,
+                        metrics.total,
+                        `${metrics.percentage}%`,
+                        this.formatRecordDuration(record),
+                        this.resolveDurationSeconds(record) ?? '',
+                        answer.question,
+                        answer.userAnswer,
+                        answer.correctAnswer,
+                        answer.isCorrect ? '正确' : '错误',
+                        answer.wrongReason?.category || '',
+                        answer.wrongReason?.note || '',
+                        record.id || record.sessionId || ''
+                    ]);
+                });
+            });
+        });
+
+        return `\ufeff${rows.map(row => row.map(cell => this.escapeCsvCell(cell)).join(',')).join('\r\n')}\r\n`;
     }
 
     resolveScoreMetrics(record) {
@@ -1843,71 +2019,14 @@ class MarkdownExporter {
      */
     generateAnswerTable(realData, record) {
         try {
-            // 优先使用answerComparison数据确保一致性（若有则合并补全缺失正确答案）
-            const comparison = record.answerComparison || realData?.answerComparison || null;
-            const hasComparison = comparison && Object.keys(comparison).length > 0;
-            if (hasComparison) {
-                const merged = this.mergeComparisonWithCorrections({ ...record, answerComparison: comparison });
-                return this.generateTableFromComparison(merged, record);
-            }
-
-            // 降级到原有逻辑（包含 detailSources）
-            const answers = record.answers || realData?.answers || {};
-            const correctAnswers = this.getCorrectAnswers(record);
-            const detailSources = record.answerDetails
-                || record.scoreInfo?.details
-                || record.realData?.scoreInfo?.details
-                || {};
-
-            let table = '| Question | Your Answer | Correct Answer | Result |\n';
-            table += '| -------- | ----------- | -------------- | ------ |\n';
-
-            // 获取所有题目编号并排序
-            const questionNumbers = this.extractQuestionNumbers(
-                answers && Object.keys(answers).length ? answers : {},
-                correctAnswers,
-                comparison || {}
-            );
-
-            // 限制题目数量避免表格过大
-            const maxQuestions = 50;
-            const questionsToProcess = questionNumbers.slice(0, maxQuestions);
-
-            if (questionNumbers.length > maxQuestions) {
-                console.warn(`[MarkdownExporter] 题目过多，只显示前${maxQuestions}题`);
-            }
-
-            for (let i = 0; i < questionsToProcess.length; i++) {
-                const qNum = questionsToProcess[i];
-                try {
-                    const detailKeyCandidates = [`q${qNum}`, qNum.toString()];
-                    let userAnswer = this.getUserAnswer(answers, qNum);
-                    if (!userAnswer && comparison && comparison[`q${qNum}`]) {
-                        userAnswer = comparison[`q${qNum}`].userAnswer || comparison[`q${qNum}`].user || userAnswer;
-                    }
-                    if (!userAnswer && detailSources && typeof detailSources === 'object') {
-                        for (const k of detailKeyCandidates) {
-                            if (detailSources[k]) {
-                                const detail = detailSources[k];
-                                userAnswer = detail.userAnswer ?? detail.answer ?? userAnswer;
-                                break;
-                            }
-                        }
-                    }
-                    const correctAnswer = this.getCorrectAnswer(correctAnswers, qNum);
-                    const result = this.compareAnswers(userAnswer, correctAnswer) ? '✓' : '✗';
-
-                    // 清理答案文本，避免Markdown格式问题
-                    const cleanUserAnswer = this.cleanAnswerText(userAnswer || 'No Answer');
-                    const cleanCorrectAnswer = this.cleanAnswerText(correctAnswer || 'N/A');
-
-                    table += `| ${qNum} | ${cleanUserAnswer} | ${cleanCorrectAnswer} | ${result} |\n`;
-                } catch (error) {
-                    console.warn('[MarkdownExporter] 处理题目失败:', qNum, error);
-                    table += `| ${qNum} | Error | Error | ✗ |\n`;
-                }
-            }
-
+            const rows = this.getAnswerRows({ ...record, realData });
+            let table = '| 题号 | 我的答案 | 正确答案 | 结果 | 错因 |\n';
+            table += '| ---- | -------- | -------- | ---- | ---- |\n';
+            rows.forEach(row => {
+                const result = row.isCorrect ? '正确' : '错误';
+                const wrongReason = row.isCorrect ? '' : this.formatWrongReason(row.wrongReason);
+                table += `| ${this.cleanAnswerText(row.question, 40)} | ${this.cleanAnswerText(row.userAnswer || '未作答')} | ${this.cleanAnswerText(row.correctAnswer || 'N/A')} | ${result} | ${wrongReason} |\n`;
+            });
             return table;
         } catch (error) {
             console.error('[MarkdownExporter] 生成答题表格失败:', error);
@@ -1922,55 +2041,14 @@ class MarkdownExporter {
         // 支持将 keys 中的非数字后缀/前缀保留下来，比如 qa/qb 显示为 a/b
 
         try {
-            let table = '| Question | Your Answer | Correct Answer | Result |\n';
-            table += '| -------- | ----------- | -------------- | ------ |\n';
-            const noiseKeys = new Set(['volume-slider', 'playback-speed', 'playbackspeed', 'volume']);
-            const correctMap = record ? this.getCorrectAnswers(record) : {};
-
-            // 按问题编号排序
-            const sortedKeys = Object.keys(answerComparison)
-                .filter(k => !noiseKeys.has(k))
-                .filter(k => {
-                    const entry = answerComparison[k];
-                    return entry && (entry.userAnswer || entry.correctAnswer);
-                })
-                .sort((a, b) => {
-                    const numA = parseInt(a.replace(/\D/g, '')) || 0;
-                    const numB = parseInt(b.replace(/\D/g, '')) || 0;
-                    return numA - numB;
-                });
-
-            // 限制处理的题目数量
-            const maxQuestions = 50;
-            const keysToProcess = sortedKeys.slice(0, maxQuestions);
-
-            for (let i = 0; i < keysToProcess.length; i++) {
-                const key = keysToProcess[i];
-                try {
-                    const comparison = answerComparison[key];
-                    // 如果没有数字，fallback 使用去掉前缀 q 的字母编号
-                    let questionNum = key.replace(/\D/g, '');
-                    if (!questionNum) {
-                        questionNum = key.replace(/^q/i, '');
-                    }
-                    let userAnswer = comparison.userAnswer || comparison.user || 'No Answer';
-                    const canonicalCorrect = correctMap[key]
-                        ?? (questionNum ? this.getCorrectAnswer(correctMap, questionNum) : null);
-                    let correctAnswer = canonicalCorrect || comparison.correctAnswer || comparison.correct || 'N/A';
-                    const result = canonicalCorrect
-                        ? (this.compareAnswers(userAnswer, canonicalCorrect) ? '✓' : '✗')
-                        : (comparison.isCorrect ? '✓' : '✗');
-
-                    // 清理答案文本
-                    const cleanUserAnswer = this.cleanAnswerText(userAnswer);
-                    const cleanCorrectAnswer = this.cleanAnswerText(correctAnswer);
-
-                    table += `| ${questionNum} | ${cleanUserAnswer} | ${cleanCorrectAnswer} | ${result} |\n`;
-                } catch (error) {
-                    console.warn('[MarkdownExporter] 处理比较数据失败:', key, error);
-                }
-            }
-
+            const rows = this.getAnswerRows({ ...(record || {}), answerComparison });
+            let table = '| 题号 | 我的答案 | 正确答案 | 结果 | 错因 |\n';
+            table += '| ---- | -------- | -------- | ---- | ---- |\n';
+            rows.forEach(row => {
+                const result = row.isCorrect ? '正确' : '错误';
+                const wrongReason = row.isCorrect ? '' : this.formatWrongReason(row.wrongReason);
+                table += `| ${this.cleanAnswerText(row.question, 40)} | ${this.cleanAnswerText(row.userAnswer || '未作答')} | ${this.cleanAnswerText(row.correctAnswer || 'N/A')} | ${result} | ${wrongReason} |\n`;
+            });
             return table;
         } catch (error) {
             console.error('[MarkdownExporter] 从比较数据生成表格失败:', error);
@@ -1978,10 +2056,233 @@ class MarkdownExporter {
         }
     }
 
+    getAnswerRows(record = {}) {
+        const realData = record.realData || {};
+        const comparison = record.answerComparison || realData.answerComparison || null;
+        const hasComparison = comparison && Object.keys(comparison).length > 0;
+        if (hasComparison) {
+            return this.getAnswerRowsFromComparison(comparison, record);
+        }
+
+        const answers = record.answers || realData.answers || {};
+        const correctAnswers = this.getCorrectAnswers(record);
+        const detailSources = record.answerDetails
+            || record.scoreInfo?.details
+            || realData.scoreInfo?.details
+            || {};
+        const questionNumbers = this.extractQuestionNumbers(
+            answers && Object.keys(answers).length ? answers : {},
+            correctAnswers,
+            comparison || {}
+        );
+        const maxQuestions = 50;
+        const questionsToProcess = questionNumbers.slice(0, maxQuestions);
+        if (questionNumbers.length > maxQuestions) {
+            console.warn(`[MarkdownExporter] 题目过多，只导出前${maxQuestions}题`);
+        }
+
+        return questionsToProcess.map(qNum => {
+            const detailKeyCandidates = [`q${qNum}`, qNum.toString()];
+            let userAnswer = this.getUserAnswer(answers, qNum);
+            if (!userAnswer && detailSources && typeof detailSources === 'object') {
+                for (const k of detailKeyCandidates) {
+                    if (detailSources[k]) {
+                        const detail = detailSources[k];
+                        userAnswer = detail.userAnswer ?? detail.answer ?? userAnswer;
+                        break;
+                    }
+                }
+            }
+            const correctAnswer = this.getCorrectAnswer(correctAnswers, qNum);
+            const isCorrect = this.compareAnswers(userAnswer, correctAnswer);
+            return {
+                question: qNum,
+                userAnswer: userAnswer || '未作答',
+                correctAnswer: correctAnswer || 'N/A',
+                isCorrect,
+                wrongReason: isCorrect ? null : this.getWrongReason(record, `q${qNum}`, qNum.toString())
+            };
+        });
+    }
+
+    getAnswerRowsFromComparison(answerComparison, record = {}) {
+        const merged = this.mergeComparisonWithCorrections({ ...record, answerComparison });
+        const noiseKeys = new Set(['volume-slider', 'playback-speed', 'playbackspeed', 'volume']);
+        const correctMap = record ? this.getCorrectAnswers(record) : {};
+        const sortedKeys = Object.keys(merged)
+            .filter(k => !noiseKeys.has(k))
+            .filter(k => {
+                const entry = merged[k];
+                return entry && (entry.userAnswer || entry.user || entry.correctAnswer || entry.correct);
+            })
+            .sort((a, b) => {
+                const numA = parseInt(a.replace(/\D/g, ''), 10);
+                const numB = parseInt(b.replace(/\D/g, ''), 10);
+                if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
+                if (!Number.isNaN(numA)) return -1;
+                if (!Number.isNaN(numB)) return 1;
+                return a.localeCompare(b);
+            });
+        const maxQuestions = 50;
+        const keysToProcess = sortedKeys.slice(0, maxQuestions);
+        if (sortedKeys.length > maxQuestions) {
+            console.warn(`[MarkdownExporter] 题目过多，只导出前${maxQuestions}题`);
+        }
+
+        return keysToProcess.map(key => {
+            const comparison = merged[key] || {};
+            let questionNum = key.replace(/\D/g, '');
+            if (!questionNum) {
+                questionNum = key.replace(/^q/i, '');
+            }
+            const userAnswer = comparison.userAnswer || comparison.user || '未作答';
+            const canonicalCorrect = correctMap[key]
+                ?? (questionNum ? this.getCorrectAnswer(correctMap, questionNum) : null);
+            const correctAnswer = canonicalCorrect || comparison.correctAnswer || comparison.correct || 'N/A';
+            const isCorrect = canonicalCorrect
+                ? this.compareAnswers(userAnswer, canonicalCorrect)
+                : !!comparison.isCorrect;
+            return {
+                question: questionNum || key,
+                userAnswer,
+                correctAnswer,
+                isCorrect,
+                wrongReason: isCorrect ? null : this.getWrongReason(record, key, questionNum, comparison)
+            };
+        });
+    }
+
+    getWrongReason(record = {}, key, displayQuestionNum = null, comparison = null) {
+        const candidates = [
+            comparison?.wrongReason,
+            comparison?.errorReason,
+            record?.wrongReasons?.[key],
+            displayQuestionNum != null ? record?.wrongReasons?.[`q${displayQuestionNum}`] : null,
+            displayQuestionNum != null ? record?.wrongReasons?.[String(displayQuestionNum)] : null,
+            record?.answerComparison?.[key]?.wrongReason,
+            displayQuestionNum != null ? record?.answerComparison?.[`q${displayQuestionNum}`]?.wrongReason : null,
+            record?.answerDetails?.[key]?.wrongReason,
+            displayQuestionNum != null ? record?.answerDetails?.[`q${displayQuestionNum}`]?.wrongReason : null,
+            record?.scoreInfo?.details?.[key]?.wrongReason,
+            displayQuestionNum != null ? record?.scoreInfo?.details?.[`q${displayQuestionNum}`]?.wrongReason : null,
+            record?.realData?.answerComparison?.[key]?.wrongReason,
+            displayQuestionNum != null ? record?.realData?.answerComparison?.[`q${displayQuestionNum}`]?.wrongReason : null,
+            record?.realData?.scoreInfo?.details?.[key]?.wrongReason,
+            displayQuestionNum != null ? record?.realData?.scoreInfo?.details?.[`q${displayQuestionNum}`]?.wrongReason : null
+        ];
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return { category: candidate.trim(), note: '' };
+            }
+            if (typeof candidate === 'object') {
+                const category = String(candidate.category || candidate.reason || candidate.type || '').trim();
+                const note = String(candidate.note || candidate.detail || candidate.text || '').trim();
+                if (category || note) {
+                    return { category, note };
+                }
+            }
+        }
+        return null;
+    }
+
+    formatWrongReason(reason) {
+        if (!reason) return '';
+        const category = String(reason.category || '').trim();
+        const note = String(reason.note || '').trim();
+        const text = [category, note].filter(Boolean).join(' - ');
+        return this.cleanAnswerText(text, 180);
+    }
+
+    countWrongReasonRows(record = {}) {
+        try {
+            return this.getAnswerRows(record).filter(row => !row.isCorrect && this.formatWrongReason(row.wrongReason)).length;
+        } catch (error) {
+            console.warn('[MarkdownExporter] 统计错因数量失败:', error);
+            return 0;
+        }
+    }
+
+    resolveRecordDisplay(record = {}, fallbackDate = null) {
+        const metadata = record.metadata || {};
+        const displayTitle = this.normalizeTitle(
+            metadata.examTitle
+            || metadata.title
+            || record.title
+            || record.examId
+            || '未知题目'
+        );
+        return {
+            title: displayTitle,
+            category: metadata.category || record.category || 'Unknown',
+            frequency: metadata.frequency || record.frequency || 'unknown',
+            date: fallbackDate || this.formatRecordDate(record)
+        };
+    }
+
+    formatRecordDate(record = {}) {
+        const raw = record.startTime || record.date || record.endTime || record.createdAt;
+        if (!raw) return '未知日期';
+        const date = new Date(raw);
+        if (Number.isNaN(date.getTime())) return '未知日期';
+        return date.toISOString().split('T')[0];
+    }
+
+    normalizeRecordsByDate(value) {
+        if (Array.isArray(value)) {
+            return this.groupRecordsByDate(value, []);
+        }
+        if (!value || typeof value !== 'object') {
+            return {};
+        }
+        const normalized = {};
+        Object.entries(value).forEach(([date, records]) => {
+            normalized[date] = Array.isArray(records) ? records : [];
+        });
+        return normalized;
+    }
+
+    resolveDurationSeconds(record = {}) {
+        if (
+            record.durationUnknown === true
+            || record.timePrecision === 'date-only'
+            || record.source === 'markdown-recovery'
+            || record.recoveredFrom
+        ) {
+            const known = Number(record.duration ?? record.elapsedSeconds);
+            return Number.isFinite(known) && known > 0 ? known : null;
+        }
+        const numeric = Number(record.duration ?? record.elapsedSeconds);
+        return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    formatRecordDuration(record = {}) {
+        const seconds = this.resolveDurationSeconds(record);
+        return seconds == null ? '未记录' : this.formatDuration(seconds);
+    }
+
+    formatDuration(seconds) {
+        const totalSeconds = Number(seconds) || 0;
+        if (totalSeconds <= 0) return '0秒';
+        const minutes = Math.floor(totalSeconds / 60);
+        const rest = totalSeconds % 60;
+        if (minutes <= 0) return `${rest}秒`;
+        return rest ? `${minutes}分${rest}秒` : `${minutes}分`;
+    }
+
+    escapeCsvCell(value) {
+        if (value == null) return '';
+        const text = String(value).replace(/\r?\n/g, ' ');
+        if (/[",\r\n]/.test(text)) {
+            return `"${text.replace(/"/g, '""')}"`;
+        }
+        return text;
+    }
+
     /**
      * 清理答案文本，避免Markdown格式问题
      */
-    cleanAnswerText(text) {
+    cleanAnswerText(text, maxLength = 100) {
         if (!text) return '';
 
         return String(text)
@@ -1989,7 +2290,7 @@ class MarkdownExporter {
             .replace(/\n/g, ' ')    // 替换换行符
             .replace(/\r/g, '')     // 移除回车符
             .trim()
-            .substring(0, 100);     // 限制长度
+            .substring(0, maxLength); // 限制长度
     }
 
     /**
@@ -2200,10 +2501,37 @@ class MarkdownExporter {
             throw error;
         }
     }
+
+    /**
+     * 下载 CSV 明细表
+     */
+    downloadCsvFile(content) {
+        try {
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+
+            a.href = url;
+            a.download = `ielts-practice-records-table-${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log('[MarkdownExporter] CSV 文件下载完成');
+        } catch (error) {
+            console.error('[MarkdownExporter] CSV 文件下载失败:', error);
+            throw error;
+        }
+    }
 }
 
 // 导出类
 window.MarkdownExporter = MarkdownExporter;
+window.exportPracticeTableData = async function exportPracticeTableData() {
+    const exporter = new MarkdownExporter();
+    return exporter.exportToCsv();
+};
 
 
 /* ===== js/components/practiceRecordModal.js ===== */
@@ -2347,9 +2675,9 @@ class PracticeRecordModal {
                     return;
                 }
 
-                closeModal();
                 try {
                     await window.app.openPracticeRecordReplay(replayRecord);
+                    closeModal();
                 } catch (error) {
                     console.error('[PracticeRecordModal] 启动回放失败:', error);
                     if (typeof window.showMessage === 'function') {
@@ -2380,15 +2708,20 @@ class PracticeRecordModal {
         const category = record.category || metadata.category || '\u672a\u77e5\u5206\u7c7b';
         const frequencyLabel = this.getFrequencyLabel(record);
         const startTimestamp = record.startTime || record.date;
-        const formattedStart = this.formatDate(startTimestamp);
+        const formattedStart = this.isDateOnlyRecord(record)
+            ? this.formatDateOnly(startTimestamp)
+            : this.formatDate(startTimestamp);
         const durationSeconds = this.resolveDuration(record);
-        const formattedDuration = this.formatDuration(durationSeconds);
+        const formattedDuration = this.isDateOnlyRecord(record) && !(Number.isFinite(durationSeconds) && durationSeconds > 0)
+            ? '\u672a\u8bb0\u5f55'
+            : this.formatDuration(durationSeconds);
         const score = this.resolveScore(record);
         const accuracy = this.resolveAccuracy(record);
         const accuracyPercent = accuracy != null ? Math.round(accuracy * 100) : null;
         const summaryCounts = this.getEntriesSummary(this.collectAllEntries(record));
         const incorrectCount = summaryCounts.incorrect || 0;
         const unansweredCount = summaryCounts.unanswered || 0;
+        const wrongReasonSummary = this.getWrongReasonSummary(record);
 
         // 多套题模式的额外信息
         let multiSuiteInfo = '';
@@ -2444,6 +2777,10 @@ class PracticeRecordModal {
                                     <span class="meta-label">\u672a\u4f5c\u7b54\uff1a</span>
                                     <span class="meta-value unanswered-count">${unansweredCount}</span>
                                 </div>
+                                <div class="meta-item">
+                                    <span class="meta-label">已标错因：</span>
+                                    <span class="meta-value wrong-reason-count">${wrongReasonSummary.tagged}/${wrongReasonSummary.incorrect}</span>
+                                </div>
                                 ${multiSuiteInfo}
                             </div>
                         </div>
@@ -2486,6 +2823,9 @@ class PracticeRecordModal {
     }
 
     resolveDuration(record) {
+        if (this.isDateOnlyRecord(record) && !(Number.isFinite(Number(record.duration)) && Number(record.duration) > 0)) {
+            return null;
+        }
         if (typeof record.duration === 'number') {
             return record.duration;
         }
@@ -2546,6 +2886,22 @@ class PracticeRecordModal {
             console.warn('[PracticeRecordModal] \u65e5\u671f\u683c\u5f0f\u5316\u5931\u8d25:', error);
         }
         return '\u672a\u77e5';
+    }
+
+    isDateOnlyRecord(record) {
+        return !!record && (
+            record.source === 'markdown-recovery'
+            || record.timePrecision === 'date-only'
+            || !!record.recoveredFrom
+        );
+    }
+
+    formatDateOnly(value) {
+        if (!value) {
+            return '\u672a\u77e5';
+        }
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? '\u672a\u77e5' : parsed.toLocaleDateString();
     }
 
     formatDuration(seconds) {
@@ -2628,7 +2984,7 @@ class PracticeRecordModal {
                     let content = '';
 
                     if (this.hasNormalizedEntries(normalizedEntries)) {
-                        content = this.renderAnswersSection(normalizedEntries, { wrap: false });
+                        content = this.renderAnswersSection(normalizedEntries, { wrap: false, record: entryRecord });
                     } else {
                         content = this.generateLegacyAnswerTableForSingle(entryRecord);
                     }
@@ -2657,7 +3013,7 @@ class PracticeRecordModal {
 
         const normalizedEntries = this.getNormalizedEntries(preparedRecord);
         if (this.hasNormalizedEntries(normalizedEntries)) {
-            return this.renderAnswersSection(normalizedEntries, { wrap: true });
+            return this.renderAnswersSection(normalizedEntries, { wrap: true, record: preparedRecord });
         }
 
         return this.generateLegacyAnswerTableForSingle(preparedRecord);
@@ -2731,13 +3087,95 @@ class PracticeRecordModal {
         return { total, correct, incorrect, unanswered };
     }
 
+    formatWrongReason(reason) {
+        if (!reason) {
+            return '';
+        }
+        if (typeof reason === 'string') {
+            return reason.trim();
+        }
+        if (typeof reason === 'object') {
+            const category = typeof reason.category === 'string' ? reason.category.trim() : '';
+            const note = typeof reason.note === 'string' ? reason.note.trim() : '';
+            return [category, note].filter(Boolean).join('：');
+        }
+        return String(reason).trim();
+    }
+
+    getWrongReasonFromRecord(record, key, entry = {}) {
+        const map = record && record.wrongReasons && typeof record.wrongReasons === 'object'
+            ? record.wrongReasons
+            : {};
+        const displayNumber = entry.displayNumber || entry.questionNumber || entry.questionLabel || entry.number;
+        const candidates = [
+            entry.wrongReason,
+            entry.errorReason,
+            entry.wrongReasonNote,
+            map[key],
+            displayNumber != null ? map[`q${displayNumber}`] : null,
+            displayNumber != null ? map[String(displayNumber)] : null
+        ];
+        for (const candidate of candidates) {
+            const formatted = this.formatWrongReason(candidate);
+            if (formatted) {
+                return formatted;
+            }
+        }
+        return '';
+    }
+
+    getWrongReasonSummary(record) {
+        const entries = this.collectAllEntries(record);
+        const summary = { incorrect: 0, tagged: 0 };
+        if (Array.isArray(entries) && entries.length > 0) {
+            entries.forEach((entry) => {
+                if (entry && entry.isCorrect === false) {
+                    summary.incorrect += 1;
+                    const key = entry.questionId || entry.canonicalKey || entry.key || (entry.displayNumber ? `q${entry.displayNumber}` : '');
+                    if (
+                        this.formatWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote)
+                        || this.getWrongReasonFromRecord(record, key, entry)
+                    ) {
+                        summary.tagged += 1;
+                    }
+                }
+            });
+            return summary;
+        }
+
+        const maps = [
+            record && record.answerComparison,
+            record && record.answerDetails,
+            record && record.scoreInfo && record.scoreInfo.details,
+            record && record.realData && record.realData.answerComparison,
+            record && record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details
+        ].filter(map => map && typeof map === 'object');
+        const seen = new Set();
+        maps.forEach((map) => {
+            Object.entries(map).forEach(([key, entry]) => {
+                if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                    return;
+                }
+                seen.add(key);
+                summary.incorrect += 1;
+                if (this.getWrongReasonFromRecord(record, key, entry)) {
+                    summary.tagged += 1;
+                }
+            });
+        });
+        if (summary.incorrect === 0 && record && record.wrongReasons && typeof record.wrongReasons === 'object') {
+            summary.tagged = Object.values(record.wrongReasons).filter(reason => this.formatWrongReason(reason)).length;
+        }
+        return summary;
+    }
+
     renderAnswersSection(entries, options = {}) {
         const normalizedEntries = Array.isArray(entries) ? entries : [];
         if (normalizedEntries.length === 0) {
             return '<div class="no-answers-message"><p>\u6682\u65e0\u7b54\u9898\u6570\u636e</p></div>';
         }
 
-        const tableHtml = this.renderEntriesTable(normalizedEntries);
+        const tableHtml = this.renderEntriesTable(normalizedEntries, options.record || null);
 
         if (options.wrap === false) {
             return tableHtml;
@@ -2754,7 +3192,7 @@ class PracticeRecordModal {
         return '';
     }
 
-    renderEntriesTable(entries) {
+    renderEntriesTable(entries, record = null) {
         if (!Array.isArray(entries) || entries.length === 0) {
             return '<div class="answers-table-container"><p class="no-details">\u6682\u65e0\u7b54\u9898\u6570\u636e</p></div>';
         }
@@ -2764,6 +3202,14 @@ class PracticeRecordModal {
                 const questionLabel = this.escapeHtml(entry.displayNumber || '');
                 const userDisplay = this.escapeHtml(entry.userAnswer || '\u672a\u4f5c\u7b54');
                 const correctDisplay = this.escapeHtml(entry.correctAnswer || '\u65e0');
+                const questionKey = entry.questionId || entry.canonicalKey || entry.key || (entry.displayNumber ? `q${entry.displayNumber}` : '');
+                const wrongReasonDisplay = entry.isCorrect === false
+                    ? this.escapeHtml(
+                        this.formatWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote)
+                        || this.getWrongReasonFromRecord(record, questionKey, entry)
+                        || '未标注'
+                    )
+                    : '';
 
                 let resultIcon = '\u2753';
                 let resultClass = 'unknown';
@@ -2782,6 +3228,7 @@ class PracticeRecordModal {
                         <td class="correct-answer">${correctDisplay}</td>
                         <td class="user-answer">${userDisplay}</td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${wrongReasonDisplay}</td>
                     </tr>
                 `;
             })
@@ -2796,6 +3243,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2833,6 +3281,9 @@ class PracticeRecordModal {
                 const resultIcon = isCorrect ? '&#10003;' : '&#10005;';
                 const safeUser = userAnswer != null ? this.truncateAnswer(userAnswer) : '\u672a\u4f5c\u7b54';
                 const safeCorrect = correctAnswer != null ? this.truncateAnswer(correctAnswer) : '\u65e0';
+                const wrongReasonDisplay = !isCorrect
+                    ? (this.getWrongReasonFromRecord(record, `q${questionNumber}`, { questionLabel: questionNumber }) || '未标注')
+                    : '';
 
                 return `
                     <tr class="answer-row ${resultClass}">
@@ -2844,6 +3295,7 @@ class PracticeRecordModal {
                             ${this.escapeHtml(safeUser)}
                         </td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${this.escapeHtml(wrongReasonDisplay)}</td>
                     </tr>
                 `;
             })
@@ -2858,6 +3310,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2960,7 +3413,8 @@ class PracticeRecordModal {
                     questionLabel,
                     userAnswer: hasUserAnswer ? normalizedUser : '',
                     correctAnswer: hasCorrectAnswer ? normalizedCorrect : '',
-                    isCorrect: typeof comparison.isCorrect === 'boolean' ? comparison.isCorrect : null
+                    isCorrect: typeof comparison.isCorrect === 'boolean' ? comparison.isCorrect : null,
+                    wrongReason: comparison.wrongReason || comparison.errorReason || comparison.wrongReasonNote || null
                 };
             })
             .filter(Boolean);
@@ -2982,6 +3436,9 @@ class PracticeRecordModal {
                 const correctDisplay = entry.correctAnswer
                     ? this.truncateAnswer(entry.correctAnswer)
                     : '\u65e0';
+                const wrongReasonDisplay = resultFlag === false
+                    ? (this.formatWrongReason(entry.wrongReason) || '未标注')
+                    : '';
 
                 return `
                     <tr class="answer-row ${resultClass}">
@@ -2993,6 +3450,7 @@ class PracticeRecordModal {
                             ${this.escapeHtml(userDisplay)}
                         </td>
                         <td class="result-icon ${resultClass}">${resultIcon}</td>
+                        <td class="wrong-reason-display">${this.escapeHtml(wrongReasonDisplay)}</td>
                     </tr>
                 `;
             })
@@ -3007,6 +3465,7 @@ class PracticeRecordModal {
                             <th>\u6b63\u786e\u7b54\u6848</th>
                             <th>\u6211\u7684\u7b54\u6848</th>
                             <th>\u5bf9\u9519</th>
+                            <th>错因</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -3076,8 +3535,17 @@ class PracticeRecordModal {
     mergeComparisonWithCorrections(record) {
         const comparison = JSON.parse(JSON.stringify(record.answerComparison || {}));
         const canonicalMap = this.getCanonicalCorrectAnswerMap(record);
+        const detailSources = [
+            record && record.answerDetails,
+            record && record.realData && record.realData.answerDetails,
+            record && record.rawData && record.rawData.answerDetails,
+            record && record.scoreInfo && record.scoreInfo.details,
+            record && record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details,
+            record && record.rawData && record.rawData.scoreInfo && record.rawData.scoreInfo.details
+        ].filter(source => source && typeof source === 'object' && !Array.isArray(source));
         const sources = [
             canonicalMap,
+            ...detailSources.map((details) => Object.fromEntries(Object.entries(details).map(([key, detail]) => [key, detail && detail.correctAnswer]))),
             (record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details)
                 ? Object.fromEntries(Object.entries(record.realData.scoreInfo.details).map(([key, detail]) => [key, detail && detail.correctAnswer]))
                 : null,
@@ -3095,8 +3563,32 @@ class PracticeRecordModal {
             return null;
         };
 
+        const getDetail = (key) => {
+            for (const source of detailSources) {
+                if (source && source[key] && typeof source[key] === 'object') {
+                    return source[key];
+                }
+            }
+            return null;
+        };
+
         Object.keys(comparison).forEach((key) => {
             const item = comparison[key] || {};
+            const detail = getDetail(key);
+            if (detail) {
+                if (detail.userAnswer != null || detail.answer != null || detail.user != null) {
+                    item.userAnswer = detail.userAnswer ?? detail.answer ?? detail.user;
+                }
+                if (detail.correctAnswer != null || detail.correct != null) {
+                    item.correctAnswer = detail.correctAnswer ?? detail.correct;
+                }
+                if (typeof detail.isCorrect === 'boolean') {
+                    item.isCorrect = detail.isCorrect;
+                }
+                if (detail.wrongReason || detail.wrongReasonNote || detail.errorReason) {
+                    item.wrongReason = detail.wrongReason || detail.wrongReasonNote || detail.errorReason;
+                }
+            }
             const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(canonicalMap, key);
             if (hasCanonicalCorrectAnswer) {
                 const fixed = getFromSources(key);
@@ -3643,6 +4135,13 @@ class PracticeHistoryEnhancer {
                                         <p>易读的文档格式，包含详细的答题表格</p>
                                     </div>
                                 </label>
+                                <label class="format-option">
+                                    <input type="radio" name="export-format" value="csv">
+                                    <div class="option-content">
+                                        <strong>CSV 表格</strong>
+                                        <p>一题一行，适合用 Excel 筛选错因和复盘</p>
+                                    </div>
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -3671,6 +4170,8 @@ class PracticeHistoryEnhancer {
 
             if (selectedFormat === 'markdown') {
                 await this.exportAsMarkdown();
+            } else if (selectedFormat === 'csv') {
+                await this.exportAsCsv();
             } else {
                 await this.exportAsJSON();
             }
@@ -3695,6 +4196,20 @@ class PracticeHistoryEnhancer {
         await exporter.exportToMarkdown();
 
         window.showMessage('Markdown 格式导出成功', 'success');
+    }
+
+    /**
+     * 导出为 CSV 表格
+     */
+    async exportAsCsv() {
+        if (!window.MarkdownExporter) {
+            throw new Error('MarkdownExporter 未加载');
+        }
+
+        const exporter = new MarkdownExporter();
+        await exporter.exportToCsv();
+
+        window.showMessage('CSV 表格导出成功', 'success');
     }
 
     /**
@@ -5804,6 +6319,22 @@ window.ScoreStorage = ScoreStorage;
         return normalized;
     }
 
+    function normalizeWrongReason(value) {
+        var source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        var category = normalizeValue(source.category ?? source.reason ?? source.type);
+        var note = normalizeValue(source.note ?? source.detail ?? source.text);
+        if (!category && !note) {
+            return null;
+        }
+        return {
+            category: category,
+            note: note,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
     function sanitizeComparisonMap(comparisonMap) {
         if (!comparisonMap || typeof comparisonMap !== 'object') {
             return {};
@@ -5835,6 +6366,10 @@ window.ScoreStorage = ScoreStorage;
             if (hasMeaningfulValue(canonicalAnswer)) {
                 sanitized[key].canonicalAnswer = canonicalAnswer;
             }
+            var wrongReason = normalizeWrongReason(entry.wrongReason ?? entry.errorReason ?? entry.wrongReasonNote);
+            if (wrongReason) {
+                sanitized[key].wrongReason = wrongReason;
+            }
         });
         return sanitized;
     }
@@ -5843,6 +6378,7 @@ window.ScoreStorage = ScoreStorage;
         normalizeValue: normalizeValue,
         hasMeaningfulValue: hasMeaningfulValue,
         normalizeValueList: normalizeValueList,
+        normalizeWrongReason: normalizeWrongReason,
         sanitizeComparisonMap: sanitizeComparisonMap
     };
 

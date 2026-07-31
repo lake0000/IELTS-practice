@@ -30,7 +30,25 @@
         if (isNaN(date.getTime())) {
             return null;
         }
-        return date.toISOString().slice(0, 10);
+        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+    }
+
+    function parseDateKeyAsLocalDate(dateKey) {
+        var parts = String(dateKey || '').split('-').map(function parsePart(part) {
+            return Number(part);
+        });
+        if (parts.length !== 3 || parts.some(function invalid(part) { return !Number.isFinite(part); })) {
+            return null;
+        }
+        return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+
+    function getRecordDateKey(record) {
+        var timestamp = getRecordTimestamp(record);
+        if (timestamp > 0) {
+            return toDateKey(timestamp);
+        }
+        return null;
     }
 
     function getRecordTimestamp(record) {
@@ -103,6 +121,17 @@
         return parts.slice(-2).join('/');
     }
 
+    function normalizePracticeRecordTitleForLookup(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[’‘]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[\s\-_/]+/g, ' ')
+            .replace(/^[pc]\s*[123]\s*(low|medium|high|次高频|高频|中频|低频)?\s*/i, '')
+            .trim();
+    }
+
     function recordMatchesExam(exam, record) {
         if (!exam || !record) {
             return false;
@@ -113,6 +142,15 @@
         var examTitle = exam.title || '';
         var recordTitle = record.title || record.examTitle || '';
         if (examTitle && recordTitle && examTitle === recordTitle) {
+            return true;
+        }
+        var normalizedExamTitle = normalizePracticeRecordTitleForLookup(examTitle);
+        var normalizedRecordTitle = normalizePracticeRecordTitleForLookup(recordTitle);
+        if (normalizedExamTitle && normalizedRecordTitle && (
+            normalizedExamTitle === normalizedRecordTitle ||
+            normalizedRecordTitle.indexOf(normalizedExamTitle) !== -1 ||
+            normalizedExamTitle.indexOf(normalizedRecordTitle) !== -1
+        )) {
             return true;
         }
         var examPath = normalizePathValue(exam.path || exam.resourcePath || exam.basePath);
@@ -147,20 +185,24 @@
     }
 
     function calculateStreak(uniqueDateKeys) {
-        if (!uniqueDateKeys.length) {
+        var sorted = ensureArray(uniqueDateKeys).slice().sort(function (a, b) {
+            return parseDateKeyAsLocalDate(b) - parseDateKeyAsLocalDate(a);
+        });
+        if (!sorted.length) {
             return 0;
         }
-        var sorted = uniqueDateKeys.slice().sort(function (a, b) {
-            return new Date(b) - new Date(a);
-        });
-        var today = new Date();
+
         var streak = 0;
         var previousDate = null;
-
+        var now = new Date();
+        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         for (var i = 0; i < sorted.length; i += 1) {
-            var currentDate = new Date(sorted[i]);
+            var currentDate = parseDateKeyAsLocalDate(sorted[i]);
+            if (!currentDate) {
+                continue;
+            }
             if (i === 0) {
-                var differenceFromToday = Math.floor((today - currentDate) / (24 * 60 * 60 * 1000));
+                var differenceFromToday = Math.round((today - currentDate) / (24 * 60 * 60 * 1000));
                 if (differenceFromToday > 1) {
                     break;
                 }
@@ -169,7 +211,7 @@
                 continue;
             }
 
-            var diff = Math.floor((previousDate - currentDate) / (24 * 60 * 60 * 1000));
+            var diff = Math.round((previousDate - currentDate) / (24 * 60 * 60 * 1000));
             if (diff === 1) {
                 streak += 1;
                 previousDate = currentDate;
@@ -186,17 +228,22 @@
         var totalPracticed = normalized.length;
         var totalScore = 0;
         var totalMinutes = 0;
+        var knownDurationCount = 0;
         var uniqueDates = [];
         var seenDates = new Set();
 
         for (var i = 0; i < normalized.length; i += 1) {
             var record = normalized[i];
-            var percentage = typeof record.percentage === 'number' ? record.percentage : 0;
+            var resolvedPercentage = normalizePracticeTrendPercentage(record);
+            var percentage = Number.isFinite(resolvedPercentage) ? resolvedPercentage : 0;
             var duration = typeof record.duration === 'number' ? record.duration : 0;
             totalScore += percentage;
-            totalMinutes += duration;
+            if (duration > 0 || !(record.durationUnknown || record.timePrecision === 'date-only' || record.source === 'markdown-recovery' || record.recoveredFrom)) {
+                totalMinutes += duration;
+                knownDurationCount += 1;
+            }
 
-            var dateKey = toDateKey(record.date);
+            var dateKey = getRecordDateKey(record);
             if (dateKey && !seenDates.has(dateKey)) {
                 seenDates.add(dateKey);
                 uniqueDates.push(dateKey);
@@ -210,6 +257,7 @@
             totalPracticed: totalPracticed,
             averageScore: avgScore,
             totalStudyMinutes: totalMinutes / 60,
+            durationUnknown: totalPracticed > 0 && knownDurationCount === 0,
             streak: streak
         };
     }
@@ -273,7 +321,7 @@
         summary = summary || {};
         this._setText(this.ids.total, typeof summary.totalPracticed === 'number' ? summary.totalPracticed : 0);
         this._setText(this.ids.average, formatPercentage(summary.averageScore));
-        this._setText(this.ids.duration, formatMinutes(summary.totalStudyMinutes));
+        this._setText(this.ids.duration, summary.durationUnknown ? '未记录' : formatMinutes(summary.totalStudyMinutes));
         this._setText(this.ids.streak, typeof summary.streak === 'number' ? summary.streak : 0);
     };
 
@@ -301,9 +349,18 @@
 
     function formatMinutes(minutes) {
         if (typeof minutes !== 'number' || isNaN(minutes)) {
-            return '0';
+            return '0分钟';
         }
-        return Math.round(minutes).toString();
+        var totalMinutes = Math.max(0, Math.round(minutes));
+        var hours = Math.floor(totalMinutes / 60);
+        var remainingMinutes = totalMinutes % 60;
+        if (hours > 0 && remainingMinutes > 0) {
+            return hours + '小时' + remainingMinutes + '分钟';
+        }
+        if (hours > 0) {
+            return hours + '小时';
+        }
+        return totalMinutes + '分钟';
     }
 
     // --- Practice trend renderer ---
@@ -2247,6 +2304,396 @@
         });
     }
 
+    function formatPracticeRecordDate(record) {
+        if (!record || !record.date) {
+            return '未知时间';
+        }
+        var parsed = new Date(record.date);
+        if (Number.isNaN(parsed.getTime())) {
+            return '未知时间';
+        }
+        var dateOnly = record.source === 'markdown-recovery'
+            || record.timePrecision === 'date-only'
+            || !!record.recoveredFrom;
+        return dateOnly ? parsed.toLocaleDateString() : parsed.toLocaleString();
+    }
+
+    function hasUnknownRecoveredDuration(record, durationInSeconds) {
+        if (!record) {
+            return false;
+        }
+        var recoveredFromMarkdown = record.source === 'markdown-recovery'
+            || record.timePrecision === 'date-only'
+            || !!record.recoveredFrom;
+        return recoveredFromMarkdown && !(Number.isFinite(durationInSeconds) && durationInSeconds > 0);
+    }
+
+    function formatWrongReasonValue(reason) {
+        if (!reason) {
+            return '';
+        }
+        if (typeof reason === 'string') {
+            return reason.trim();
+        }
+        if (typeof reason === 'object') {
+            var category = typeof reason.category === 'string' ? reason.category.trim() : '';
+            var note = typeof reason.note === 'string' ? reason.note.trim() : '';
+            return [category, note].filter(Boolean).join('：');
+        }
+        return String(reason).trim();
+    }
+
+    function getWrongReasonValue(record, key, entry) {
+        var map = record && record.wrongReasons && typeof record.wrongReasons === 'object'
+            ? record.wrongReasons
+            : {};
+        var displayNumber = entry && (entry.displayNumber || entry.questionNumber || entry.number);
+        var candidates = [
+            entry && entry.wrongReason,
+            entry && entry.errorReason,
+            entry && entry.wrongReasonNote,
+            map[key],
+            displayNumber != null ? map['q' + displayNumber] : null,
+            displayNumber != null ? map[String(displayNumber)] : null
+        ];
+        for (var index = 0; index < candidates.length; index += 1) {
+            var text = formatWrongReasonValue(candidates[index]);
+            if (text) {
+                return text;
+            }
+        }
+        return '';
+    }
+
+    function summarizeWrongReasons(record) {
+        var summary = { incorrect: 0, tagged: 0 };
+        if (!record) {
+            return summary;
+        }
+        var maps = [
+            record.answerComparison,
+            record.answerDetails,
+            record.scoreInfo && record.scoreInfo.details,
+            record.realData && record.realData.answerComparison,
+            record.realData && record.realData.scoreInfo && record.realData.scoreInfo.details
+        ].filter(function (map) {
+            return map && typeof map === 'object';
+        });
+        var seen = new Set();
+        maps.forEach(function (map) {
+            Object.entries(map).forEach(function (pair) {
+                var key = String(pair[0]);
+                var entry = pair[1];
+                if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                    return;
+                }
+                seen.add(key);
+                summary.incorrect += 1;
+                if (getWrongReasonValue(record, key, entry)) {
+                    summary.tagged += 1;
+                }
+            });
+        });
+        if (Array.isArray(record.suiteEntries)) {
+            record.suiteEntries.forEach(function (suiteEntry, suiteIndex) {
+                if (!suiteEntry || typeof suiteEntry !== 'object') {
+                    return;
+                }
+                var suiteMaps = [
+                    suiteEntry.answerComparison,
+                    suiteEntry.answerDetails,
+                    suiteEntry.scoreInfo && suiteEntry.scoreInfo.details,
+                    suiteEntry.rawData && suiteEntry.rawData.answerComparison,
+                    suiteEntry.rawData && suiteEntry.rawData.scoreInfo && suiteEntry.rawData.scoreInfo.details
+                ].filter(function (map) {
+                    return map && typeof map === 'object';
+                });
+                var suitePrefix = suiteEntry.examId || suiteEntry.id || ('suite-entry-' + suiteIndex);
+                suiteMaps.forEach(function (map) {
+                    Object.entries(map).forEach(function (pair) {
+                        var localKey = String(pair[0]);
+                        var key = suitePrefix + '::' + localKey;
+                        var entry = pair[1];
+                        if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                            return;
+                        }
+                        seen.add(key);
+                        summary.incorrect += 1;
+                        if (
+                            getWrongReasonValue(suiteEntry, localKey, entry)
+                            || getWrongReasonValue(record, key, entry)
+                        ) {
+                            summary.tagged += 1;
+                        }
+                    });
+                });
+            });
+        }
+        if (summary.incorrect === 0 && record.wrongReasons && typeof record.wrongReasons === 'object') {
+            summary.tagged = Object.values(record.wrongReasons).filter(formatWrongReasonValue).length;
+        }
+        return summary;
+    }
+
+    function normalizeHistoryLookupText(value) {
+        return String(value == null ? '' : value)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function getHistoryTitleLookupVariants(value) {
+        var text = normalizeHistoryLookupText(value);
+        if (!text) {
+            return [];
+        }
+        var variants = [text];
+        var withoutBandPrefix = text.replace(/^p\d+\s*[-_]\s*(?:ultra[-_\s]?high|very[-_\s]?high|high|medium|mid|low|超高频|次高频|高频|中频|低频)\s*[-_]\s*/, '');
+        if (withoutBandPrefix && withoutBandPrefix !== text) {
+            variants.push(withoutBandPrefix);
+        }
+        var withoutPartPrefix = text.replace(/^p\d+\s*[-_]\s*/, '');
+        if (withoutPartPrefix && variants.indexOf(withoutPartPrefix) === -1) {
+            variants.push(withoutPartPrefix);
+        }
+        return variants;
+    }
+
+    function formatHistoryFrequencyLabel(value) {
+        if (value == null || value === '') {
+            return '';
+        }
+        if (typeof global.formatFrequencyLabel === 'function') {
+            var formatted = global.formatFrequencyLabel(value);
+            if (formatted && formatted !== '未分级') {
+                return formatted;
+            }
+        }
+        var text = normalizeHistoryLookupText(value);
+        var map = {
+            'ultra-high': '超高频',
+            'ultrahigh': '超高频',
+            'very-high': '次高频',
+            'veryhigh': '次高频',
+            high: '高频',
+            medium: '中频',
+            mid: '中频',
+            low: '低频',
+            '超高频': '超高频',
+            '次高频': '次高频',
+            '高频': '高频',
+            '中频': '中频',
+            '低频': '低频'
+        };
+        return map[text] || '';
+    }
+
+    function formatHistoryDifficultyLabel(value) {
+        if (value == null || value === '') {
+            return '';
+        }
+        var score = Number(value);
+        if (!Number.isFinite(score)) {
+            return '';
+        }
+        if (typeof global.formatDifficultyLabel === 'function') {
+            var formatted = global.formatDifficultyLabel(score);
+            if (formatted && formatted !== '难度未分级') {
+                return formatted;
+            }
+        }
+        return '难度 ' + (Math.round(score * 10) / 10);
+    }
+
+    function addHistoryExamMetaCandidates(target, value) {
+        if (!value) {
+            return;
+        }
+        if (Array.isArray(value)) {
+            value.forEach(function (entry) {
+                if (entry && typeof entry === 'object') {
+                    target.push(entry);
+                }
+            });
+            return;
+        }
+        if (typeof value === 'object') {
+            Object.keys(value).forEach(function (key) {
+                var entry = value[key];
+                if (entry && typeof entry === 'object') {
+                    if (!entry.id && !entry.examId) {
+                        target.push(Object.assign({ __historyIndexKey: key }, entry));
+                        return;
+                    }
+                    target.push(entry);
+                }
+            });
+        }
+    }
+
+    function getHistoryExamMetaCandidates() {
+        var candidates = [];
+        addHistoryExamMetaCandidates(candidates, global.completeExamIndex);
+        addHistoryExamMetaCandidates(candidates, global.__READING_EXAM_INDEX__);
+        if (typeof global.getReadingExamIndex === 'function') {
+            try {
+                addHistoryExamMetaCandidates(candidates, global.getReadingExamIndex());
+            } catch (error) {
+                // Ignore lookup failures; cards can still render from record data.
+            }
+        }
+        addHistoryExamMetaCandidates(candidates, global.examIndex);
+        addHistoryExamMetaCandidates(candidates, global.__READING_EXAM_MANIFEST__);
+        return candidates;
+    }
+
+    function getHistoryRecordLookupValues(record) {
+        var metadata = record && record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+        var realData = record && record.realData && typeof record.realData === 'object' ? record.realData : {};
+        return {
+            ids: [
+                record && record.examId,
+                record && record.id,
+                record && record.dataKey,
+                metadata.examId,
+                metadata.id,
+                metadata.dataKey,
+                realData.examId,
+                realData.id,
+                realData.dataKey
+            ].map(normalizeHistoryLookupText).filter(Boolean),
+            titles: [
+                record && record.title,
+                record && record.examTitle,
+                metadata.examTitle,
+                metadata.title,
+                realData.title,
+                realData.examTitle
+            ].reduce(function (acc, value) {
+                getHistoryTitleLookupVariants(value).forEach(function (variant) {
+                    if (acc.indexOf(variant) === -1) {
+                        acc.push(variant);
+                    }
+                });
+                return acc;
+            }, [])
+        };
+    }
+
+    function findHistoryExamMeta(record) {
+        var lookup = getHistoryRecordLookupValues(record);
+        if (!lookup.ids.length && !lookup.titles.length) {
+            return null;
+        }
+        var candidates = getHistoryExamMetaCandidates();
+        for (var index = 0; index < candidates.length; index += 1) {
+            var exam = candidates[index];
+            var examIds = [
+                exam.examId,
+                exam.id,
+                exam.dataKey,
+                exam.fileName,
+                exam.filename,
+                exam.__historyIndexKey
+            ].map(normalizeHistoryLookupText).filter(Boolean);
+            if (examIds.some(function (id) { return lookup.ids.indexOf(id) !== -1; })) {
+                return exam;
+            }
+        }
+        for (var titleIndex = 0; titleIndex < candidates.length; titleIndex += 1) {
+            var titleExam = candidates[titleIndex];
+            var examTitles = [
+                titleExam.title,
+                titleExam.examTitle,
+                titleExam.name,
+                titleExam.filename,
+                titleExam.fileName
+            ].map(normalizeHistoryLookupText).filter(Boolean);
+            if (examTitles.some(function (title) { return lookup.titles.indexOf(title) !== -1; })) {
+                return titleExam;
+            }
+        }
+        return null;
+    }
+
+    function inferHistoryFrequencyLabel(record) {
+        var metadata = record && record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+        var realData = record && record.realData && typeof record.realData === 'object' ? record.realData : {};
+        var text = normalizeHistoryLookupText([
+            record && record.examId,
+            record && record.id,
+            record && record.dataKey,
+            record && record.title,
+            record && record.examTitle,
+            metadata.examId,
+            metadata.examTitle,
+            realData.examId,
+            realData.title
+        ].filter(Boolean).join(' '));
+        var matches = [
+            { pattern: /(ultra[-_\s]?high|超高频)/, label: '超高频' },
+            { pattern: /(very[-_\s]?high|次高频)/, label: '次高频' },
+            { pattern: /(^|[-_\s])high([-_\s]|$)|高频/, label: '高频' },
+            { pattern: /(^|[-_\s])(medium|mid)([-_\s]|$)|中频/, label: '中频' },
+            { pattern: /(^|[-_\s])low([-_\s]|$)|低频/, label: '低频' }
+        ];
+        for (var index = 0; index < matches.length; index += 1) {
+            if (matches[index].pattern.test(text)) {
+                return matches[index].label;
+            }
+        }
+        return '';
+    }
+
+    function getHistoryFirstValue(list) {
+        for (var index = 0; index < list.length; index += 1) {
+            var value = list[index];
+            if (value != null && value !== '') {
+                return value;
+            }
+        }
+        return '';
+    }
+
+    function getHistoryRecordMetaTags(record) {
+        var metadata = record && record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+        var realData = record && record.realData && typeof record.realData === 'object' ? record.realData : {};
+        var exam = findHistoryExamMeta(record) || {};
+        var frequencyLabel = formatHistoryFrequencyLabel(getHistoryFirstValue([
+            exam.frequency,
+            exam.frequencyBand,
+            exam.freq,
+            metadata.frequency,
+            metadata.frequencyBand,
+            record && record.frequency,
+            record && record.frequencyBand,
+            realData.frequency,
+            realData.frequencyBand
+        ])) || inferHistoryFrequencyLabel(record);
+        var difficultyLabel = formatHistoryDifficultyLabel(getHistoryFirstValue([
+            exam.difficultyScore,
+            exam.difficulty,
+            exam.difficultyLevel,
+            metadata.difficultyScore,
+            metadata.difficulty,
+            record && record.difficultyScore,
+            record && record.difficulty,
+            realData.difficultyScore,
+            realData.difficulty
+        ]));
+        if (!difficultyLabel && frequencyLabel) {
+            difficultyLabel = '难度未分级';
+        }
+        var tags = [];
+        if (frequencyLabel) {
+            tags.push({ kind: 'frequency', label: frequencyLabel });
+        }
+        if (difficultyLabel) {
+            tags.push({ kind: 'difficulty', label: difficultyLabel });
+        }
+        return tags;
+    }
+
     historyRenderer.createRecordNode = function (record, options) {
         options = options || {};
         var bulkDeleteMode = Boolean(options.bulkDeleteMode);
@@ -2260,9 +2707,18 @@
         }
         var helpers = historyRenderer.helpers;
         var durationInSeconds = Number(record && record.duration) || 0;
+        var durationText = hasUnknownRecoveredDuration(record, durationInSeconds)
+            ? '未记录'
+            : helpers.formatDurationShort(durationInSeconds);
+        var durationColor = hasUnknownRecoveredDuration(record, durationInSeconds)
+            ? '#6b7280'
+            : helpers.getDurationColor(durationInSeconds);
         var percentage = typeof record.percentage === 'number'
             ? record.percentage
             : Math.round((record.accuracy || 0) * 100);
+        var wrongReasonSummary = summarizeWrongReasons(record);
+        var wrongReasonPending = Math.max(wrongReasonSummary.incorrect - wrongReasonSummary.tagged, 0);
+        var metaTags = getHistoryRecordMetaTags(record);
 
         var recordId = '';
         if (record && record.id != null) {
@@ -2318,14 +2774,25 @@
             }, [
                 createNode('strong', null, record && record.title ? record.title : '无标题')
             ]),
+            metaTags.length ? createNode('div', { className: 'history-meta-tags', 'aria-label': '题目标签' }, metaTags.map(function (tag) {
+                return createNode('span', {
+                    className: 'history-meta-tag history-meta-tag--' + tag.kind
+                }, tag.label);
+            })) : null,
             createNode('div', { className: 'record-meta-line' }, [
-                createNode('small', { className: 'record-date' }, record && record.date ? new Date(record.date).toLocaleString() : '未知时间'),
+                createNode('small', { className: 'record-date' }, formatPracticeRecordDate(record)),
                 createNode('small', { className: 'record-duration-value' }, [
                     createNode('strong', null, '用时'),
                     createNode('strong', {
                         className: 'duration-time',
-                        style: { color: helpers.getDurationColor(durationInSeconds) }
-                    }, helpers.formatDurationShort(durationInSeconds))
+                        style: { color: durationColor }
+                    }, durationText)
+                ]),
+                createNode('small', { className: 'record-wrong-reason-value' }, [
+                    createNode('strong', null, '错因'),
+                    createNode('strong', {
+                        className: 'wrong-reason-count' + (wrongReasonPending > 0 ? ' has-pending' : '')
+                    }, wrongReasonSummary.tagged + '/' + wrongReasonSummary.incorrect)
                 ])
             ])
         ]);
@@ -2517,6 +2984,19 @@
             var pct = Number(record && record.percentage) || 0;
             var dur = Number(record && record.duration) || 0;
             var title = record && (record.title || record.examTitle || (record.metadata && record.metadata.examTitle)) || '';
+            var metadata = record && record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+            var metaTokens = [
+                record && record.examId,
+                record && record.frequency,
+                record && record.frequencyBand,
+                record && record.difficulty,
+                record && record.difficultyScore,
+                metadata.examId,
+                metadata.frequency,
+                metadata.frequencyBand,
+                metadata.difficulty,
+                metadata.difficultyScore
+            ].map(historyRenderer.helpers.getRecordsSignatureText).join(',');
             var suiteEntries = historyRenderer.helpers.computeSuiteEntriesSignature(record);
             return JSON.stringify([
                 historyRenderer.helpers.getRecordsSignatureText(id),
@@ -2524,6 +3004,7 @@
                 pct,
                 dur,
                 historyRenderer.helpers.getRecordsSignatureText(title),
+                metaTokens,
                 suiteEntries
             ]);
         });

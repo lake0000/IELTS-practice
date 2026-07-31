@@ -441,6 +441,7 @@
             params.set('examId', String(examId));
         }
         params.set('dataKey', String(resolvedDataKey));
+        params.set('v', String(global.APP_ASSET_VERSION || '20260730-replay-detail-wrongreason'));
         return `assets/generated/reading-exams/reading-practice-unified.html?${params.toString()}`;
     }
 

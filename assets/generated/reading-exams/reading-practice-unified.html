@@ -419,6 +419,26 @@
             font-size: 0.92rem;
         }
 
+        .result-meta-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0 2px;
+        }
+
+        .result-meta-tag {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 4px 10px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.72);
+            color: var(--muted);
+            font-size: 0.86rem;
+            font-weight: 600;
+        }
+
         .results-table th,
         .results-table td {
             border: 1px solid var(--line);
@@ -1920,8 +1940,9 @@
         </div>
     </div>
 
+    <script src="../../../js/bundles/core-foundation.bundle.js?v=20260730-replay-detail-wrongreason"></script>
     <script src="./manifest.js"></script>
-    <script src="../../../js/bundles/reading-page.bundle.js"></script>
+    <script src="../../../js/bundles/reading-page.bundle.js?v=20260730-replay-detail-wrongreason"></script>
 </body>
 
 </html>

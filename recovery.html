@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习记录只读恢复检查</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #111827;
+            background: #f8fafc;
+        }
+        main {
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        h1 {
+            font-size: 24px;
+            margin: 0 0 8px;
+        }
+        .notice {
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin: 16px 0;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 16px 0;
+        }
+        button {
+            border: 1px solid #9ca3af;
+            background: #fff;
+            color: #111827;
+            border-radius: 6px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        button.primary {
+            background: #1f2937;
+            border-color: #1f2937;
+            color: #fff;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            border: 1px solid #d1d5db;
+        }
+        th, td {
+            border-bottom: 1px solid #e5e7eb;
+            padding: 9px 10px;
+            text-align: left;
+            vertical-align: top;
+            font-size: 14px;
+        }
+        th {
+            background: #f3f4f6;
+            font-weight: 700;
+        }
+        textarea {
+            width: 100%;
+            min-height: 260px;
+            margin-top: 16px;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 12px;
+            box-sizing: border-box;
+            background: #fff;
+        }
+        .muted {
+            color: #6b7280;
+            font-size: 13px;
+        }
+        .ok {
+            color: #047857;
+            font-weight: 700;
+        }
+        .bad {
+            color: #b91c1c;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>练习记录只读恢复检查</h1>
+    <div class="muted" id="origin-line"></div>
+    <div class="notice">
+        这个页面只读取当前 origin 的 <code>localStorage</code>、<code>sessionStorage</code> 和
+        <code>IndexedDB / ExamSystemDB / keyValueStore</code>。默认不写入、不删除、不恢复，避免误伤数据。
+    </div>
+    <div class="actions">
+        <button class="primary" id="scan-btn" type="button">重新扫描</button>
+        <button id="download-report-btn" type="button">下载扫描报告</button>
+        <button id="download-records-btn" type="button">下载最大候选记录</button>
+    </div>
+    <table>
+        <thead>
+        <tr>
+            <th>来源</th>
+            <th>Key</th>
+            <th>是否存在</th>
+            <th>记录数</th>
+            <th>原始长度</th>
+            <th>最近记录</th>
+        </tr>
+        </thead>
+        <tbody id="result-body">
+        <tr><td colspan="6">准备扫描...</td></tr>
+        </tbody>
+    </table>
+    <textarea id="report-box" readonly></textarea>
+</main>
+<script>
+(function initRecoveryPage() {
+    'use strict';
+
+    const STORAGE_KEYS = [
+        'practice_records',
+        'old_prefix_practice_records',
+        'exam_system_practice_records',
+        'exam_system_user_stats',
+        'upgrade_v1_1_0_cleanup_done'
+    ];
+    let lastReport = null;
+    let largestCandidate = null;
+
+    const originLine = document.getElementById('origin-line');
+    const resultBody = document.getElementById('result-body');
+    const reportBox = document.getElementById('report-box');
+    originLine.textContent = `当前 origin：${location.origin}`;
+
+    function parseMaybeJson(raw) {
+        if (raw == null || raw === '') return { parsed: null, rawLength: 0 };
+        if (typeof raw !== 'string') return { parsed: raw, rawLength: 0 };
+        try {
+            return { parsed: JSON.parse(raw), rawLength: raw.length };
+        } catch (error) {
+            return { parsed: null, rawLength: raw.length, parseError: error.message };
+        }
+    }
+
+    function unwrapRecords(parsed) {
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && Array.isArray(parsed.data)) return parsed.data;
+        if (parsed && Array.isArray(parsed.practice_records)) return parsed.practice_records;
+        if (parsed && Array.isArray(parsed.practiceRecords)) return parsed.practiceRecords;
+        if (parsed && parsed.exam_system_practice_records && Array.isArray(parsed.exam_system_practice_records.data)) {
+            return parsed.exam_system_practice_records.data;
+        }
+        if (parsed && parsed.data && parsed.data.exam_system_practice_records && Array.isArray(parsed.data.exam_system_practice_records.data)) {
+            return parsed.data.exam_system_practice_records.data;
+        }
+        return null;
+    }
+
+    function countPayloadRecords(payload) {
+        return unwrapRecords(payload)?.length || 0;
+    }
+
+    function describeLatest(records) {
+        if (!Array.isArray(records) || records.length === 0) return '';
+        const sorted = records.slice().sort((a, b) => {
+            const ta = new Date(a.updatedAt || a.endTime || a.startTime || a.date || 0).getTime() || 0;
+            const tb = new Date(b.updatedAt || b.endTime || b.startTime || b.date || 0).getTime() || 0;
+            return tb - ta;
+        });
+        const item = sorted[0] || {};
+        const title = item.title || item.examTitle || item.examId || '未知题目';
+        const time = item.updatedAt || item.endTime || item.startTime || item.date || '';
+        return `${title}${time ? ' / ' + time : ''}`;
+    }
+
+    function makeEntry(source, key, raw, extra = {}) {
+        const { parsed, rawLength, parseError } = parseMaybeJson(raw);
+        const records = unwrapRecords(parsed);
+        const entry = {
+            source,
+            key,
+            exists: raw != null,
+            rawLength: rawLength || (raw == null ? 0 : String(raw).length),
+            count: Array.isArray(records) ? records.length : null,
+            latest: describeLatest(records),
+            parseError: parseError || '',
+            records: Array.isArray(records) ? records : null,
+            extra
+        };
+        if (entry.records && (!largestCandidate || entry.records.length > largestCandidate.records.length)) {
+            largestCandidate = entry;
+        }
+        return entry;
+    }
+
+    function readWebStorage(store, source) {
+        return STORAGE_KEYS.map((key) => {
+            let raw = null;
+            try {
+                raw = store ? store.getItem(key) : null;
+            } catch (error) {
+                return {
+                    source,
+                    key,
+                    exists: false,
+                    rawLength: 0,
+                    count: null,
+                    latest: '',
+                    parseError: error.message,
+                    records: null
+                };
+            }
+            return makeEntry(source, key, raw);
+        });
+    }
+
+    function openDatabase(name) {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(name);
+            request.onerror = () => reject(request.error || new Error(`打开 ${name} 失败`));
+            request.onsuccess = () => resolve(request.result);
+        });
+    }
+
+    function getAllFromStore(db, storeName) {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const req = store.getAll();
+            req.onerror = () => reject(req.error || new Error(`读取 ${storeName} 失败`));
+            req.onsuccess = () => resolve(req.result || []);
+        });
+    }
+
+    async function readIndexedDB() {
+        const entries = [];
+        if (!window.indexedDB) {
+            entries.push({
+                source: 'IndexedDB',
+                key: 'unsupported',
+                exists: false,
+                rawLength: 0,
+                count: null,
+                latest: '',
+                parseError: '当前浏览器不支持 indexedDB',
+                records: null
+            });
+            return entries;
+        }
+
+        let names = ['ExamSystemDB'];
+        if (indexedDB.databases) {
+            try {
+                const dbs = await indexedDB.databases();
+                const discovered = dbs.map(db => db && db.name).filter(Boolean);
+                if (discovered.includes('ExamSystemDB')) names = ['ExamSystemDB'];
+            } catch (_) {}
+        }
+
+        for (const name of names) {
+            let db = null;
+            try {
+                db = await openDatabase(name);
+                const stores = Array.from(db.objectStoreNames || []);
+                if (!stores.includes('keyValueStore')) {
+                    entries.push({
+                        source: `IndexedDB:${name}`,
+                        key: 'keyValueStore',
+                        exists: false,
+                        rawLength: 0,
+                        count: null,
+                        latest: '',
+                        parseError: '没有 keyValueStore',
+                        records: null
+                    });
+                    db.close();
+                    continue;
+                }
+                const all = await getAllFromStore(db, 'keyValueStore');
+                all.forEach((row) => {
+                    const raw = row && Object.prototype.hasOwnProperty.call(row, 'value')
+                        ? row.value
+                        : row;
+                    entries.push(makeEntry(`IndexedDB:${name}`, row && row.key ? row.key : '(unknown)', raw, {
+                        timestamp: row && row.timestamp
+                    }));
+                });
+                if (all.length === 0) {
+                    entries.push({
+                        source: `IndexedDB:${name}`,
+                        key: 'keyValueStore',
+                        exists: true,
+                        rawLength: 0,
+                        count: null,
+                        latest: '',
+                        parseError: 'store 为空',
+                        records: null
+                    });
+                }
+                db.close();
+            } catch (error) {
+                if (db) db.close();
+                entries.push({
+                    source: `IndexedDB:${name}`,
+                    key: '(open/read)',
+                    exists: false,
+                    rawLength: 0,
+                    count: null,
+                    latest: '',
+                    parseError: error.message,
+                    records: null
+                });
+            }
+        }
+        return entries;
+    }
+
+    async function readExternalBackupPreview() {
+        const entries = [];
+        let db = null;
+        try {
+            db = await openDatabase('ExamSystemExternalBackup');
+            const stores = Array.from(db.objectStoreNames || []);
+            if (!stores.includes('handles')) {
+                entries.push({
+                    source: 'ExternalBackup',
+                    key: 'handles',
+                    exists: false,
+                    rawLength: 0,
+                    count: null,
+                    latest: '',
+                    parseError: '没有 handles store',
+                    records: null
+                });
+                db.close();
+                return entries;
+            }
+
+            const handleRow = await new Promise((resolve, reject) => {
+                const tx = db.transaction('handles', 'readonly');
+                const store = tx.objectStore('handles');
+                const req = store.get('backup_directory');
+                req.onerror = () => reject(req.error || new Error('读取备份文件夹句柄失败'));
+                req.onsuccess = () => resolve(req.result || null);
+            });
+            db.close();
+            db = null;
+
+            const handle = handleRow && (handleRow.handle || handleRow.value || handleRow);
+            if (!handle || typeof handle.getFileHandle !== 'function') {
+                entries.push({
+                    source: 'ExternalBackup',
+                    key: 'practice-backup-latest.json',
+                    exists: false,
+                    rawLength: 0,
+                    count: null,
+                    latest: '',
+                    parseError: '没有可用的备份文件夹句柄',
+                    records: null
+                });
+                return entries;
+            }
+
+            let permission = 'unknown';
+            if (typeof handle.queryPermission === 'function') {
+                try {
+                    permission = await handle.queryPermission({ mode: 'read' });
+                } catch (_) {}
+            }
+            if (permission !== 'granted') {
+                entries.push({
+                    source: 'ExternalBackup',
+                    key: 'practice-backup-latest.json',
+                    exists: true,
+                    rawLength: 0,
+                    count: null,
+                    latest: '',
+                    parseError: `备份文件夹句柄存在，但读取权限是 ${permission}`,
+                    records: null
+                });
+                return entries;
+            }
+
+            const fileHandle = await handle.getFileHandle('practice-backup-latest.json', { create: false });
+            const file = await fileHandle.getFile();
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            const payload = parsed && parsed.data ? parsed.data : parsed;
+            const records = unwrapRecords(payload);
+            entries.push({
+                source: 'ExternalBackup',
+                key: 'practice-backup-latest.json',
+                exists: true,
+                rawLength: text.length,
+                count: Array.isArray(records) ? records.length : countPayloadRecords(payload),
+                latest: describeLatest(records),
+                parseError: '',
+                records: Array.isArray(records) ? records : null,
+                extra: {
+                    directoryName: handle.name || '',
+                    fileLastModified: file.lastModified || null
+                }
+            });
+        } catch (error) {
+            if (db) db.close();
+            entries.push({
+                source: 'ExternalBackup',
+                key: 'practice-backup-latest.json',
+                exists: false,
+                rawLength: 0,
+                count: null,
+                latest: '',
+                parseError: error.message || String(error),
+                records: null
+            });
+        }
+        return entries;
+    }
+
+    function render(entries) {
+        resultBody.innerHTML = '';
+        entries.forEach((entry) => {
+            const tr = document.createElement('tr');
+            const existsClass = entry.exists ? 'ok' : 'bad';
+            tr.innerHTML = [
+                `<td>${escapeHtml(entry.source)}</td>`,
+                `<td>${escapeHtml(entry.key)}</td>`,
+                `<td class="${existsClass}">${entry.exists ? '是' : '否'}</td>`,
+                `<td>${entry.count == null ? '' : entry.count}</td>`,
+                `<td>${entry.rawLength || 0}</td>`,
+                `<td>${escapeHtml(entry.latest || entry.parseError || '')}</td>`
+            ].join('');
+            resultBody.appendChild(tr);
+        });
+        const report = entries.map((entry) => ({
+            source: entry.source,
+            key: entry.key,
+            exists: entry.exists,
+            rawLength: entry.rawLength,
+            count: entry.count,
+            latest: entry.latest,
+            parseError: entry.parseError,
+            extra: entry.extra || {}
+        }));
+        reportBox.value = JSON.stringify({
+            origin: location.origin,
+            scannedAt: new Date().toISOString(),
+            largestCandidate: largestCandidate ? {
+                source: largestCandidate.source,
+                key: largestCandidate.key,
+                count: largestCandidate.records.length,
+                latest: largestCandidate.latest
+            } : null,
+            entries: report
+        }, null, 2);
+    }
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    async function scan() {
+        largestCandidate = null;
+        resultBody.innerHTML = '<tr><td colspan="6">扫描中...</td></tr>';
+        const entries = [
+            ...readWebStorage(localStorage, 'localStorage'),
+            ...readWebStorage(sessionStorage, 'sessionStorage'),
+            ...(await readIndexedDB()),
+            ...(await readExternalBackupPreview())
+        ];
+        lastReport = entries;
+        render(entries);
+    }
+
+    function downloadFile(name, content, type = 'application/json;charset=utf-8') {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('scan-btn').addEventListener('click', scan);
+    document.getElementById('download-report-btn').addEventListener('click', () => {
+        downloadFile(`practice-recovery-report-${new Date().toISOString().slice(0, 10)}.json`, reportBox.value || '{}');
+    });
+    document.getElementById('download-records-btn').addEventListener('click', () => {
+        if (!largestCandidate || !largestCandidate.records || largestCandidate.records.length === 0) {
+            alert('没有找到可下载的练习记录候选。');
+            return;
+        }
+        downloadFile(
+            `practice-recovered-records-${largestCandidate.records.length}-${new Date().toISOString().slice(0, 10)}.json`,
+            JSON.stringify(largestCandidate.records, null, 2)
+        );
+    });
+
+    scan().catch((error) => {
+        resultBody.innerHTML = `<tr><td colspan="6">扫描失败：${escapeHtml(error.message || error)}</td></tr>`;
+    });
+})();
+</script>
+</body>
+</html>

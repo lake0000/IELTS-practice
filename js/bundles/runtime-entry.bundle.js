@@ -717,6 +717,8 @@
     var groupStatus = Object.create(null);
     var dependencies = Object.create(null);
     var providedScripts = new Set();
+    var ASSET_VERSION = '20260730-replay-detail-wrongreason';
+    global.APP_ASSET_VERSION = ASSET_VERSION;
     var READING_EXAM_MANIFEST_SCRIPT = 'assets/generated/reading-exams/manifest.js';
     var LISTENING_EXAM_MANIFEST_SCRIPT = 'assets/generated/listening-exams/manifest.js';
     var LISTENING_EXAM_INDEX_SCRIPT = 'assets/generated/listening-exams/listening-index.compat.js';
@@ -791,11 +793,45 @@
         }
     }
 
+    function versionScriptUrl(url) {
+        if (!url || !ASSET_VERSION) {
+            return url;
+        }
+        var text = String(url);
+        if (!/\.js(\?|#|$)/i.test(text)) {
+            return url;
+        }
+        if (/^(https?:)?\/\//i.test(text) && !text.startsWith(global.location.origin)) {
+            return url;
+        }
+        try {
+            var parsed = new URL(text, document.baseURI);
+            parsed.searchParams.set('v', ASSET_VERSION);
+            return parsed.href;
+        } catch (_) {
+            var separator = text.indexOf('?') === -1 ? '?' : '&';
+            return text + separator + 'v=' + encodeURIComponent(ASSET_VERSION);
+        }
+    }
+
+    function stripVersionParam(url) {
+        if (!url) {
+            return '';
+        }
+        try {
+            var parsed = new URL(url, document.baseURI);
+            parsed.searchParams.delete('v');
+            return parsed.href;
+        } catch (_) {
+            return String(url).replace(/([?&])v=[^&#]*&?/g, '$1').replace(/[?&]$/, '');
+        }
+    }
+
     function findExistingScriptTag(url) {
         if (typeof document === 'undefined') {
             return null;
         }
-        var target = normalizeScriptUrl(url);
+        var target = stripVersionParam(normalizeScriptUrl(url));
         if (!target) {
             return null;
         }
@@ -806,7 +842,7 @@
             if (!srcAttr) {
                 continue;
             }
-            if (normalizeScriptUrl(srcAttr) === target || normalizeScriptUrl(node.src) === target) {
+            if (stripVersionParam(normalizeScriptUrl(srcAttr)) === target || stripVersionParam(normalizeScriptUrl(node.src)) === target) {
                 return node;
             }
         }
@@ -858,7 +894,7 @@
 
         scriptStatus[url] = new Promise(function inject(resolve, reject) {
             var script = document.createElement('script');
-            script.src = url;
+            script.src = versionScriptUrl(url);
             script.async = true;
             script.onload = function handleLoad() {
                 scriptStatus[url] = 'loaded';
@@ -1309,20 +1345,25 @@
         return global.AppLazyLoader.ensureGroup('practice-suite');
     }
 
-    function exportPracticeMarkdown() {
-        ensurePracticeSuite().then(function handleExportReady() {
-            if (!global.markdownExporter || typeof global.markdownExporter.exportToMarkdown !== 'function') {
-                if (typeof global.MarkdownExporter === 'function') {
-                    try {
-                        global.markdownExporter = new global.MarkdownExporter();
-                    } catch (error) {
-                        console.error('[AppActions] 初始化 MarkdownExporter 失败:', error);
-                    }
+    function getMarkdownExporter() {
+        if (!global.markdownExporter || typeof global.markdownExporter.exportToMarkdown !== 'function') {
+            if (typeof global.MarkdownExporter === 'function') {
+                try {
+                    global.markdownExporter = new global.MarkdownExporter();
+                } catch (error) {
+                    console.error('[AppActions] 初始化 MarkdownExporter 失败:', error);
                 }
             }
+        }
+        return global.markdownExporter || null;
+    }
 
-            if (global.markdownExporter && typeof global.markdownExporter.exportToMarkdown === 'function') {
-                global.markdownExporter.exportToMarkdown();
+    function exportPracticeMarkdown() {
+        ensurePracticeSuite().then(function handleExportReady() {
+            var exporter = getMarkdownExporter();
+
+            if (exporter && typeof exporter.exportToMarkdown === 'function') {
+                exporter.exportToMarkdown();
                 return;
             }
 
@@ -1333,6 +1374,26 @@
             console.error('[AppActions] 导出失败:', error);
             if (typeof global.showMessage === 'function') {
                 global.showMessage('导出失败，请稍后重试', 'error');
+            }
+        });
+    }
+
+    function exportPracticeCsv() {
+        ensurePracticeSuite().then(function handleExportReady() {
+            var exporter = getMarkdownExporter();
+
+            if (exporter && typeof exporter.exportToCsv === 'function') {
+                exporter.exportToCsv();
+                return;
+            }
+
+            if (typeof global.showMessage === 'function') {
+                global.showMessage('CSV 表格导出模块未就绪', 'warning');
+            }
+        }).catch(function handleExportError(error) {
+            console.error('[AppActions] CSV 导出失败:', error);
+            if (typeof global.showMessage === 'function') {
+                global.showMessage('CSV 导出失败，请稍后重试', 'error');
             }
         });
     }
@@ -1675,6 +1736,120 @@
         }
     }
 
+    function normalizeExamLookupValue(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[’‘]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[\s\-_/]+/g, ' ')
+            .replace(/^[pc]\s*[123]\s*(?:ultra high|very high|high|medium|mid|low|次高频|高频|中频|低频)?\s*/i, '')
+            .trim();
+    }
+
+    function logRandomPractice(level, event, detail) {
+        var logger = console && typeof console[level] === 'function'
+            ? console[level]
+            : (console && typeof console.log === 'function' ? console.log : null);
+        if (!logger) {
+            return;
+        }
+        try {
+            logger.call(console, '[RandomPractice] ' + event, detail || {});
+        } catch (_) { }
+    }
+
+    function addRecordExamLookups(record, idSet, titleSet) {
+        if (!record || typeof record !== 'object') {
+            return;
+        }
+        [
+            record.examId,
+            record.derivedExamId,
+            record.metadata && record.metadata.examId,
+            record.realData && record.realData.examId,
+            record.rawData && record.rawData.examId
+        ].forEach(function addId(value) {
+            var id = String(value || '').trim();
+            if (id) {
+                idSet.add(id);
+            }
+        });
+        [
+            record.title,
+            record.examTitle,
+            record.metadata && record.metadata.examTitle,
+            record.realData && record.realData.title,
+            record.rawData && record.rawData.title
+        ].forEach(function addTitle(value) {
+            var title = normalizeExamLookupValue(value);
+            if (title) {
+                titleSet.add(title);
+            }
+        });
+        if (Array.isArray(record.suiteEntries)) {
+            record.suiteEntries.forEach(function addSuiteEntry(entry) {
+                addRecordExamLookups(entry, idSet, titleSet);
+            });
+        }
+    }
+
+    function getPracticeRecordsSnapshot() {
+        if (typeof global.getPracticeRecordsState === 'function') {
+            try {
+                var stateRecords = global.getPracticeRecordsState();
+                if (Array.isArray(stateRecords)) {
+                    return stateRecords;
+                }
+            } catch (_) { }
+        }
+        if (Array.isArray(global.practiceRecords)) {
+            return global.practiceRecords;
+        }
+        return [];
+    }
+
+    function buildCompletedExamLookup(records) {
+        var idSet = new Set();
+        var titleSet = new Set();
+        (Array.isArray(records) ? records : []).forEach(function addRecord(record) {
+            addRecordExamLookups(record, idSet, titleSet);
+        });
+        return { idSet: idSet, titleSet: titleSet };
+    }
+
+    function isCompletedExam(exam, completedLookup) {
+        if (!exam || !completedLookup) {
+            return false;
+        }
+        var id = String(exam.id || '').trim();
+        if (id && completedLookup.idSet.has(id)) {
+            return true;
+        }
+        var title = normalizeExamLookupValue(exam.title);
+        return Boolean(title && completedLookup.titleSet.has(title));
+    }
+
+    function filterUnpracticedExams(pool, records) {
+        var completedLookup = buildCompletedExamLookup(records);
+        return (Array.isArray(pool) ? pool : []).filter(function keepUnpracticed(exam) {
+            return !isCompletedExam(exam, completedLookup);
+        });
+    }
+
+    function ensurePracticeRecordsForRandom() {
+        if (typeof global.ensurePracticeRecordsSync === 'function') {
+            return Promise.resolve(global.ensurePracticeRecordsSync('random-practice')).catch(function (error) {
+                logRandomPractice('warn', 'sync-records-failed', {
+                    error: error && error.message ? error.message : String(error)
+                });
+                return false;
+            });
+        }
+        logRandomPractice('warn', 'sync-records-unavailable');
+        return Promise.resolve(false);
+    }
+
     function getExamIndexSnapshot() {
         if (typeof global.getExamIndexState === 'function') {
             try {
@@ -1897,52 +2072,83 @@
             return Array.isArray(global.examIndex) ? global.examIndex : [];
         };
 
-        var list = getExamIndexState();
-        var normalizedType = (!type || type === 'all') ? null : type;
-        var normalizedPath = (typeof path === 'string' && path.trim()) ? path.trim() : null;
+        return ensurePracticeRecordsForRandom().then(function pickAfterRecordSync() {
+            var list = getExamIndexState();
+            var normalizedType = (!type || type === 'all') ? null : type;
+            var normalizedPath = (typeof path === 'string' && path.trim()) ? path.trim() : null;
 
-        var pool = Array.from(list);
+            var pool = Array.from(list);
 
-        if (normalizedType) {
-            pool = pool.filter(function (exam) { return exam.type === normalizedType; });
-        }
-
-        if (category && category !== 'all') {
-            var filteredByCategory = pool.filter(function (exam) { return exam.category === category; });
-            if (filteredByCategory.length > 0 || !normalizedPath) {
-                pool = filteredByCategory;
+            if (normalizedType) {
+                pool = pool.filter(function (exam) { return exam.type === normalizedType; });
             }
-        }
 
-        if (normalizedPath) {
-            pool = pool.filter(function (exam) {
-                return typeof exam?.path === 'string' && exam.path.includes(normalizedPath);
-            });
-        } else if (filterMode && global.BROWSE_MODES && global.BROWSE_MODES[filterMode]) {
-            var modeConfig = global.BROWSE_MODES[filterMode];
-            if (modeConfig?.basePath) {
+            if (category && category !== 'all') {
+                var filteredByCategory = pool.filter(function (exam) { return exam.category === category; });
+                if (filteredByCategory.length > 0 || !normalizedPath) {
+                    pool = filteredByCategory;
+                }
+            }
+
+            if (normalizedPath) {
                 pool = pool.filter(function (exam) {
-                    return typeof exam?.path === 'string' && exam.path.includes(modeConfig.basePath);
+                    return typeof exam?.path === 'string' && exam.path.includes(normalizedPath);
                 });
+            } else if (filterMode && global.BROWSE_MODES && global.BROWSE_MODES[filterMode]) {
+                var modeConfig = global.BROWSE_MODES[filterMode];
+                if (modeConfig?.basePath) {
+                    pool = pool.filter(function (exam) {
+                        return typeof exam?.path === 'string' && exam.path.includes(modeConfig.basePath);
+                    });
+                }
             }
-        }
 
-        if (pool.length === 0) {
+            if (pool.length === 0) {
+                if (typeof global.showMessage === 'function') {
+                    var typeLabel = normalizedType === 'listening'
+                        ? '听力'
+                        : (normalizedType === 'reading' ? '阅读' : '题库');
+                    global.showMessage(category + ' ' + typeLabel + ' 分类暂无可用题目', 'error');
+                }
+                return null;
+            }
+
+            var records = getPracticeRecordsSnapshot();
+            var unpracticedPool = filterUnpracticedExams(pool, records);
+            logRandomPractice('info', 'candidate-filtered', {
+                category: category || 'all',
+                type: normalizedType || 'all',
+                filterMode: filterMode || null,
+                path: normalizedPath || null,
+                records: Array.isArray(records) ? records.length : 0,
+                pool: pool.length,
+                unpracticed: unpracticedPool.length
+            });
+            if (unpracticedPool.length === 0) {
+                if (typeof global.showMessage === 'function') {
+                    global.showMessage('当前筛选下没有未练习题目，未重复抽取已做题。', 'warning');
+                }
+                logRandomPractice('warn', 'no-unpracticed-candidate', {
+                    category: category || 'all',
+                    type: normalizedType || 'all',
+                    pool: pool.length
+                });
+                return null;
+            }
+
+            var randomExam = unpracticedPool[Math.floor(Math.random() * unpracticedPool.length)];
             if (typeof global.showMessage === 'function') {
-                var typeLabel = normalizedType === 'listening'
-                    ? '听力'
-                    : (normalizedType === 'reading' ? '阅读' : '题库');
-                global.showMessage(category + ' ' + typeLabel + ' 分类暂无可用题目', 'error');
+                global.showMessage('随机选择: ' + randomExam.title, 'info');
             }
-            return;
-        }
+            logRandomPractice('info', 'selected', {
+                examId: randomExam.id || null,
+                title: randomExam.title || '',
+                unpracticed: unpracticedPool.length
+            });
 
-        var randomExam = pool[Math.floor(Math.random() * pool.length)];
-        if (typeof global.showMessage === 'function') {
-            global.showMessage('随机选择: ' + randomExam.title, 'info');
-        }
-
-        openExamWithFallback(randomExam);
+            openExamWithFallback(randomExam);
+            return randomExam;
+        });
     }
 
     // ============================================================================
@@ -2004,6 +2210,12 @@
         };
         var list = getExamIndexState().filter(function (e) {
             return e && e.hasHtml && e.type === 'reading';
+        });
+        var records = getPracticeRecordsSnapshot();
+        list = filterUnpracticedExams(list, records);
+        logRandomPractice('info', 'endless-candidate-filtered', {
+            records: Array.isArray(records) ? records.length : 0,
+            unpracticed: list.length
         });
         if (!list.length) return null;
         return list[Math.floor(Math.random() * list.length)];
@@ -2207,6 +2419,7 @@
 
     global.AppActions = Object.assign({}, global.AppActions, {
         exportPracticeMarkdown: exportPracticeMarkdown,
+        exportPracticeCsv: exportPracticeCsv,
         ensurePracticeSuite: ensurePracticeSuite,
         preloadPracticeSuite: triggerPrefetch,
         preloadBrowseView: triggerBrowsePrefetch,

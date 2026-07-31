@@ -62,7 +62,7 @@
                 if (record.correctAnswers !== undefined && typeof record.correctAnswers !== 'number') {
                     errors.push('correctAnswers 必须是数字');
                 }
-                if (record.duration !== undefined && typeof record.duration !== 'number') {
+                if (record.duration !== undefined && record.duration !== null && typeof record.duration !== 'number') {
                     errors.push('duration 必须是数字');
                 }
                 if (!record.date) {

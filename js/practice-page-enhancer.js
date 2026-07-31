@@ -824,17 +824,26 @@
 
         resolvePracticeTiming: function () {
             const snapshot = this.getPracticeTimerSnapshot();
-            const startTime = Math.floor(Number(snapshot.effectiveStartTimeMs));
-            const duration = Math.max(0, Math.round(Number(snapshot.durationSeconds)));
+            const rawStartTime = Number(snapshot.effectiveStartTimeMs);
+            const startTime = Number.isFinite(rawStartTime)
+                ? Math.floor(rawStartTime)
+                : Date.now();
+            const rawDuration = Number(snapshot.durationSeconds);
+            const duration = Math.max(0, Number.isFinite(rawDuration) ? Math.round(rawDuration) : 0);
+            const rawEffectiveEndTime = Number(snapshot.effectiveEndTimeMs);
+            const effectiveEndTime = Number.isFinite(rawEffectiveEndTime)
+                ? Math.max(startTime, Math.floor(rawEffectiveEndTime))
+                : Math.max(startTime, startTime + duration * 1000);
             const actualEndTimeMsRaw = Number(snapshot.actualEndTimeMs);
-            const endTime = Number.isFinite(actualEndTimeMsRaw)
+            const actualEndTime = Number.isFinite(actualEndTimeMsRaw)
                 ? Math.floor(actualEndTimeMsRaw)
                 : Date.now();
             return {
                 startTime,
-                endTime,
+                endTime: effectiveEndTime,
                 duration,
-                effectiveEndTime: Math.max(startTime, startTime + duration * 1000)
+                effectiveEndTime,
+                actualEndTime
             };
         },
 
@@ -1369,6 +1378,27 @@
 
         normalizeReplayMap: function (rawMap) {
             const normalized = {};
+            if (Array.isArray(rawMap)) {
+                rawMap.forEach((entry) => {
+                    if (!entry || typeof entry !== 'object') {
+                        return;
+                    }
+                    let candidate = entry.questionId || entry.id || entry.key || '';
+                    if (typeof candidate === 'string' && candidate.includes('::')) {
+                        const split = candidate.split('::');
+                        candidate = split[split.length - 1];
+                    }
+                    const normalizedKey = this.normalizeQuestionId(candidate);
+                    if (!normalizedKey) {
+                        return;
+                    }
+                    const value = Object.prototype.hasOwnProperty.call(entry, 'answer')
+                        ? entry.answer
+                        : (Object.prototype.hasOwnProperty.call(entry, 'userAnswer') ? entry.userAnswer : entry.user);
+                    normalized[normalizedKey] = value;
+                });
+                return normalized;
+            }
             if (!rawMap || typeof rawMap !== 'object') {
                 return normalized;
             }
@@ -1387,14 +1417,54 @@
             return normalized;
         },
 
+        mergeReplayMapsFirstWins: function () {
+            const merged = {};
+            Array.prototype.slice.call(arguments).forEach((source) => {
+                Object.entries(source || {}).forEach(([questionId, value]) => {
+                    if (!Object.prototype.hasOwnProperty.call(merged, questionId)) {
+                        merged[questionId] = value;
+                    }
+                });
+            });
+            return merged;
+        },
+
+        readReplayEntryAnswer: function (entry, fieldNames) {
+            for (const field of fieldNames || []) {
+                if (Object.prototype.hasOwnProperty.call(entry || {}, field)) {
+                    return entry[field];
+                }
+            }
+            return undefined;
+        },
+
         buildReplayResultsFromEntry: function (entry = {}) {
             const answers = this.normalizeReplayMap(entry.answers || {});
             const correctAnswers = this.normalizeReplayMap(entry.correctAnswerMap || (entry.realData && entry.realData.correctAnswerMap) || {});
-            const rawComparison = this.normalizeReplayMap(entry.answerComparison || {});
+            const rawDetailComparison = this.mergeReplayMapsFirstWins(
+                this.normalizeReplayMap(entry.answerDetails || {}),
+                this.normalizeReplayMap(entry.realData && entry.realData.answerDetails || {}),
+                this.normalizeReplayMap(entry.rawData && entry.rawData.answerDetails || {}),
+                this.normalizeReplayMap(entry.scoreInfo && entry.scoreInfo.details || {}),
+                this.normalizeReplayMap(entry.realData && entry.realData.scoreInfo && entry.realData.scoreInfo.details || {}),
+                this.normalizeReplayMap(entry.rawData && entry.rawData.scoreInfo && entry.rawData.scoreInfo.details || {})
+            );
+            const rawFallbackComparison = this.mergeReplayMapsFirstWins(
+                this.normalizeReplayMap(entry.answerComparison || {}),
+                this.normalizeReplayMap(entry.realData && entry.realData.answerComparison || {}),
+                this.normalizeReplayMap(entry.rawData && entry.rawData.answerComparison || {})
+            );
+            const rawComparison = this.mergeReplayMapsFirstWins(rawDetailComparison, rawFallbackComparison);
+            const wrongReasons = this.mergeReplayMapsFirstWins(
+                this.normalizeReplayMap(entry.wrongReasons || {}),
+                this.normalizeReplayMap(entry.realData && entry.realData.wrongReasons || {}),
+                this.normalizeReplayMap(entry.rawData && entry.rawData.wrongReasons || {})
+            );
             const questionIds = new Set([
                 ...Object.keys(answers),
                 ...Object.keys(correctAnswers),
                 ...Object.keys(rawComparison),
+                ...Object.keys(wrongReasons),
                 ...(Array.isArray(entry.allQuestionIds)
                     ? entry.allQuestionIds.map((item) => this.normalizeQuestionId(item)).filter(Boolean)
                     : [])
@@ -1406,20 +1476,29 @@
                 const item = (rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry))
                     ? rawEntry
                     : {};
-                const userAnswer = Object.prototype.hasOwnProperty.call(item, 'userAnswer')
-                    ? item.userAnswer
+                const userAnswer = this.readReplayEntryAnswer(item, ['userAnswer', 'answer', 'user']) !== undefined
+                    ? this.readReplayEntryAnswer(item, ['userAnswer', 'answer', 'user'])
                     : (Object.prototype.hasOwnProperty.call(answers, questionId) ? answers[questionId] : '');
                 const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(correctAnswers, questionId);
                 const correctAnswer = hasCanonicalCorrectAnswer ? correctAnswers[questionId] : '';
-                const isCorrect = hasCanonicalCorrectAnswer
+                const fromDetail = Object.prototype.hasOwnProperty.call(rawDetailComparison, questionId);
+                const isCorrect = fromDetail && typeof item.isCorrect === 'boolean'
+                    ? item.isCorrect
+                    : (hasCanonicalCorrectAnswer
                     ? this.compareAnswers(userAnswer, correctAnswer)
-                    : null;
-                answerComparison[questionId] = {
+                    : null);
+                const wrongReason = item.wrongReason
+                    || item.wrongReasonNote
+                    || item.errorReason
+                    || wrongReasons[questionId]
+                    || null;
+                answerComparison[questionId] = Object.assign({}, item, {
                     questionId,
                     userAnswer,
                     correctAnswer,
-                    isCorrect
-                };
+                    isCorrect,
+                    wrongReason: wrongReason || null
+                });
             });
 
             let scoreInfo = {};
@@ -1430,10 +1509,19 @@
             }
             const derivedScore = this.calculateScoreFromComparison(answerComparison) || { correct: 0, total: questionIds.size, accuracy: 0, percentage: 0 };
             const hasCanonicalCorrectAnswers = Object.keys(correctAnswers).length > 0;
-            scoreInfo.correct = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.correct)) ? derivedScore.correct : Number(scoreInfo.correct);
-            scoreInfo.total = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.total)) ? derivedScore.total : Number(scoreInfo.total);
-            scoreInfo.accuracy = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.accuracy)) ? derivedScore.accuracy : Number(scoreInfo.accuracy);
-            scoreInfo.percentage = hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.percentage))
+            const preserveHistoricalScore = scoreInfo.preserveHistoricalScore === true;
+            scoreInfo.correct = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.correct))) ? derivedScore.correct : Number(scoreInfo.correct);
+            scoreInfo.total = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.total))) ? derivedScore.total : Number(scoreInfo.total);
+            if (!Number.isFinite(Number(scoreInfo.correct))) {
+                scoreInfo.correct = derivedScore.correct;
+            }
+            if (!Number.isFinite(Number(scoreInfo.total))) {
+                scoreInfo.total = derivedScore.total;
+            }
+            scoreInfo.accuracy = preserveHistoricalScore && Number.isFinite(Number(scoreInfo.accuracy))
+                ? Number(scoreInfo.accuracy)
+                : (scoreInfo.total > 0 ? scoreInfo.correct / scoreInfo.total : derivedScore.accuracy);
+            scoreInfo.percentage = !preserveHistoricalScore && (hasCanonicalCorrectAnswers || !Number.isFinite(Number(scoreInfo.percentage)))
                 ? derivedScore.percentage
                 : Number(scoreInfo.percentage);
             scoreInfo.percentage = Number.isFinite(Number(scoreInfo.percentage))
@@ -1444,6 +1532,7 @@
                 answers,
                 correctAnswers,
                 answerComparison,
+                wrongReasons,
                 scoreInfo
             };
         },

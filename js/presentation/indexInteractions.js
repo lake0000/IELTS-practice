@@ -332,6 +332,10 @@ function ensureSettings() {
                 return global.AppActions && typeof global.AppActions.exportPracticeMarkdown === 'function'
                     ? global.AppActions.exportPracticeMarkdown()
                     : undefined;
+            case 'export-practice-csv':
+                return global.AppActions && typeof global.AppActions.exportPracticeCsv === 'function'
+                    ? global.AppActions.exportPracticeCsv()
+                    : undefined;
             case 'toggle-bulk-delete':
                 return typeof global.toggleBulkDelete === 'function' ? global.toggleBulkDelete() : undefined;
             case 'clear-practice-data':

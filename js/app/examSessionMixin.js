@@ -277,6 +277,7 @@
             if (resolvedDataKey) {
                 params.set('dataKey', String(resolvedDataKey));
             }
+            params.set('v', String(window.APP_ASSET_VERSION || '20260730-replay-detail-wrongreason'));
             const practiceMode = options && typeof options.practiceMode === 'string'
                 ? options.practiceMode.trim().toLowerCase()
                 : '';
@@ -2490,8 +2491,30 @@
          * 创建简单的练习记录
          */
         createSimplePracticeRecord(exam, realData) {
-            const now = new Date();
             const recordId = `fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const durationSeconds = Number(realData.duration);
+            const duration = Number.isFinite(durationSeconds) && durationSeconds >= 0
+                ? Math.round(durationSeconds)
+                : 0;
+            const timerSnapshot = realData.timerSnapshot && typeof realData.timerSnapshot === 'object'
+                ? realData.timerSnapshot
+                : {};
+            const startTimeMsRaw = realData.startTime
+                ? new Date(realData.startTime).getTime()
+                : Number(timerSnapshot.effectiveStartTimeMs);
+            const startTimeMs = Number.isFinite(startTimeMsRaw)
+                ? startTimeMsRaw
+                : Date.now() - duration * 1000;
+            const effectiveEndTimeMsRaw = Number(realData.effectiveEndTimeMs ?? timerSnapshot.effectiveEndTimeMs);
+            const effectiveEndTimeMs = realData.effectiveEndTime
+                ? new Date(realData.effectiveEndTime).getTime()
+                : (Number.isFinite(effectiveEndTimeMsRaw) ? effectiveEndTimeMsRaw : NaN);
+            const endTimeMsRaw = Number.isFinite(effectiveEndTimeMs)
+                ? effectiveEndTimeMs
+                : (duration >= 0 ? startTimeMs + duration * 1000 : new Date(realData.endTime || Date.now()).getTime());
+            const endTimeMs = Number.isFinite(endTimeMsRaw) ? endTimeMsRaw : Date.now();
+            const startTimeIso = new Date(startTimeMs).toISOString();
+            const endTimeIso = new Date(endTimeMs).toISOString();
 
             // 提取分数信息
             const scoreInfo = realData.scoreInfo || {};
@@ -2520,17 +2543,16 @@
                 isRealData: true,
 
                 // 基本信息
-                startTime: realData.startTime ? new Date(realData.startTime).toISOString() :
-                    new Date(Date.now() - realData.duration * 1000).toISOString(),
-                endTime: realData.endTime ? new Date(realData.endTime).toISOString() : now.toISOString(),
-                date: now.toISOString(),
+                startTime: startTimeIso,
+                endTime: endTimeIso,
+                date: endTimeIso,
 
                 // 成绩数据
                 score: score,
                 totalQuestions: totalQuestions,
                 accuracy: accuracy,
                 percentage: Math.round(accuracy * 100),
-                duration: realData.duration, // 秒
+                duration: duration, // 秒
                 answerComparison,
                 questionTypeMap,
                 questionTypePerformance,
@@ -2655,6 +2677,23 @@
 
         _normalizeReplayAnswerMap(rawMap, targetExamId = '', allowUnprefixed = true) {
             const normalized = {};
+            if (Array.isArray(rawMap)) {
+                rawMap.forEach((entry) => {
+                    if (!this._isReplayObject(entry)) {
+                        return;
+                    }
+                    const questionId = entry.questionId || entry.id || entry.key || '';
+                    const split = this._splitReplayCompositeKey(questionId);
+                    if (!split.questionKey) {
+                        return;
+                    }
+                    const value = Object.prototype.hasOwnProperty.call(entry, 'answer')
+                        ? entry.answer
+                        : (Object.prototype.hasOwnProperty.call(entry, 'userAnswer') ? entry.userAnswer : entry.user);
+                    normalized[split.questionKey] = this._cloneReviewData(value);
+                });
+                return normalized;
+            }
             if (!this._isReplayObject(rawMap)) {
                 return normalized;
             }
@@ -2691,6 +2730,36 @@
             return bucket;
         },
 
+        _mergeReplayComparisonMapsFirstWins(target, targetExamId, allowUnprefixed) {
+            const bucket = this._isReplayObject(target) ? target : {};
+            const sources = Array.prototype.slice.call(arguments, 3);
+            sources.forEach((source) => {
+                const normalized = this._normalizeReplayComparison(source, targetExamId, allowUnprefixed);
+                Object.entries(normalized).forEach(([questionId, value]) => {
+                    if (!Object.prototype.hasOwnProperty.call(bucket, questionId)) {
+                        bucket[questionId] = this._cloneReviewData(value);
+                    }
+                });
+            });
+            return bucket;
+        },
+
+        _applyReplayWrongReasonsToComparison(comparison, wrongReasons) {
+            if (!this._isReplayObject(comparison) || !this._isReplayObject(wrongReasons)) {
+                return comparison;
+            }
+            Object.entries(wrongReasons).forEach(([questionId, reason]) => {
+                const normalizedId = this._normalizeReplayQuestionKey(questionId);
+                if (!normalizedId || !comparison[normalizedId] || !this._isReplayObject(comparison[normalizedId])) {
+                    return;
+                }
+                if (reason && typeof reason === 'object') {
+                    comparison[normalizedId].wrongReason = this._cloneReviewData(reason);
+                }
+            });
+            return comparison;
+        },
+
         _normalizeReplayComparison(rawComparison, targetExamId = '', allowUnprefixed = true) {
             const normalized = {};
             if (!this._isReplayObject(rawComparison)) {
@@ -2711,11 +2780,19 @@
                     return;
                 }
                 const entry = this._isReplayObject(rawValue) ? rawValue : { userAnswer: rawValue };
+                const userAnswer = Object.prototype.hasOwnProperty.call(entry, 'userAnswer')
+                    ? entry.userAnswer
+                    : (Object.prototype.hasOwnProperty.call(entry, 'answer') ? entry.answer : entry.user);
+                const correctAnswer = Object.prototype.hasOwnProperty.call(entry, 'correctAnswer')
+                    ? entry.correctAnswer
+                    : entry.correct;
+                const wrongReason = entry.wrongReason || entry.wrongReasonNote || entry.errorReason || null;
                 normalized[split.questionKey] = {
                     questionId: split.questionKey,
-                    userAnswer: this._cloneReviewData(entry.userAnswer),
-                    correctAnswer: this._cloneReviewData(entry.correctAnswer),
-                    isCorrect: typeof entry.isCorrect === 'boolean' ? entry.isCorrect : null
+                    userAnswer: this._cloneReviewData(userAnswer),
+                    correctAnswer: this._cloneReviewData(correctAnswer),
+                    isCorrect: typeof entry.isCorrect === 'boolean' ? entry.isCorrect : null,
+                    wrongReason: wrongReason ? this._cloneReviewData(wrongReason) : null
                 };
             });
             return normalized;
@@ -2782,8 +2859,8 @@
                     : (Object.prototype.hasOwnProperty.call(answers, questionId) ? answers[questionId] : '');
                 const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(correctAnswers, questionId);
                 const correctAnswer = hasCanonicalCorrectAnswer ? correctAnswers[questionId] : '';
-                let isCorrect = null;
-                if (hasCanonicalCorrectAnswer && userAnswer != null && correctAnswer != null && String(correctAnswer).trim()) {
+                let isCorrect = typeof existing.isCorrect === 'boolean' ? existing.isCorrect : null;
+                if (isCorrect == null && hasCanonicalCorrectAnswer && userAnswer != null && correctAnswer != null && String(correctAnswer).trim()) {
                     const matchCore = global.AnswerMatchCore;
                     if (matchCore && typeof matchCore.compareAnswers === 'function') {
                         isCorrect = matchCore.compareAnswers(userAnswer, correctAnswer);
@@ -2791,12 +2868,12 @@
                         isCorrect = String(userAnswer).trim().toLowerCase() === String(correctAnswer).trim().toLowerCase();
                     }
                 }
-                merged[questionId] = {
+                merged[questionId] = Object.assign({}, existing, {
                     questionId,
                     userAnswer: this._cloneReviewData(userAnswer),
                     correctAnswer: this._cloneReviewData(correctAnswer),
                     isCorrect
-                };
+                });
             });
             return merged;
         },
@@ -2840,6 +2917,54 @@
             scoreInfo.totalQuestions = finalTotal;
             scoreInfo.accuracy = finalAccuracy;
             scoreInfo.percentage = finalPercentage;
+            return scoreInfo;
+        },
+
+        _buildReplayScoreInfoSnapshot(entry, record) {
+            const entryScoreInfo = this._isReplayObject(entry?.scoreInfo) ? entry.scoreInfo : null;
+            const recordScoreInfo = this._isReplayObject(record?.scoreInfo) ? record.scoreInfo : null;
+            const scoreInfo = this._cloneReviewData(entryScoreInfo || recordScoreInfo || {});
+            let hasHistoricalAggregate = false;
+
+            const applyAggregate = (source) => {
+                if (!this._isReplayObject(source)) {
+                    return;
+                }
+                const correct = Number(source.score ?? source.correct ?? source.correctAnswers);
+                const total = Number(source.totalQuestions ?? source.total ?? source.questionCount);
+                const accuracy = Number(source.accuracy);
+                const percentage = Number(source.percentage);
+                if (Number.isFinite(correct)) {
+                    scoreInfo.correct = correct;
+                    scoreInfo.score = correct;
+                    hasHistoricalAggregate = true;
+                }
+                if (Number.isFinite(total)) {
+                    scoreInfo.total = total;
+                    scoreInfo.totalQuestions = total;
+                    hasHistoricalAggregate = true;
+                }
+                if (Number.isFinite(accuracy)) {
+                    scoreInfo.accuracy = accuracy;
+                    hasHistoricalAggregate = true;
+                } else if (Number.isFinite(total) && total > 0 && Number.isFinite(correct)) {
+                    scoreInfo.accuracy = correct / total;
+                    hasHistoricalAggregate = true;
+                }
+                if (Number.isFinite(percentage)) {
+                    scoreInfo.percentage = percentage;
+                    hasHistoricalAggregate = true;
+                } else if (Number.isFinite(scoreInfo.accuracy)) {
+                    scoreInfo.percentage = Math.round(Number(scoreInfo.accuracy) * 100);
+                }
+            };
+
+            applyAggregate(record);
+            applyAggregate(entry);
+
+            if (hasHistoricalAggregate) {
+                scoreInfo.preserveHistoricalScore = true;
+            }
             return scoreInfo;
         },
 
@@ -2896,12 +3021,27 @@
             const hasSuiteEntries = Array.isArray(record.suiteEntries) && record.suiteEntries.length > 0;
             const baseEntries = hasSuiteEntries ? record.suiteEntries : [record];
             const isAggregated = baseEntries.length > 1;
-            const recordAnswersSource = this._isReplayObject(record.answers) ? record.answers : (this._isReplayObject(record.realData?.answers) ? record.realData.answers : {});
-            const recordComparisonSource = this._isReplayObject(record.answerComparison) ? record.answerComparison : (this._isReplayObject(record.realData?.answerComparison) ? record.realData.answerComparison : {});
+            const recordAnswersSource = (this._isReplayObject(record.answers) || Array.isArray(record.answers)) ? record.answers : ((this._isReplayObject(record.realData?.answers) || Array.isArray(record.realData?.answers)) ? record.realData.answers : {});
             const recordCorrectSources = [
                 record.correctAnswerMap,
                 record.realData?.correctAnswerMap,
                 record.rawData?.correctAnswerMap
+            ];
+            const recordComparisonSources = [
+                record.answerDetails,
+                record.realData?.answerDetails,
+                record.rawData?.answerDetails,
+                record.scoreInfo?.details,
+                record.realData?.scoreInfo?.details,
+                record.rawData?.scoreInfo?.details,
+                record.answerComparison,
+                record.realData?.answerComparison,
+                record.rawData?.answerComparison
+            ];
+            const recordWrongReasonSources = [
+                record.wrongReasons,
+                record.realData?.wrongReasons,
+                record.rawData?.wrongReasons
             ];
 
             const builtEntries = [];
@@ -2915,8 +3055,9 @@
                         entry.correctAnswerMap,
                         entry.realData?.correctAnswerMap,
                         entry.answerComparison,
+                        entry.answerDetails,
                         recordAnswersSource,
-                        recordComparisonSource,
+                        ...recordComparisonSources,
                         ...recordCorrectSources
                     )
                     || (!isAggregated ? (record.examId || recordMetadata.examId) : '');
@@ -2927,7 +3068,7 @@
                 }
 
                 let answers = this._normalizeReplayAnswerMap(
-                    this._isReplayObject(entry.answers) ? entry.answers : (this._isReplayObject(entry.realData?.answers) ? entry.realData.answers : {}),
+                    (this._isReplayObject(entry.answers) || Array.isArray(entry.answers)) ? entry.answers : ((this._isReplayObject(entry.realData?.answers) || Array.isArray(entry.realData?.answers)) ? entry.realData.answers : {}),
                     entryExamId,
                     true
                 );
@@ -2935,14 +3076,81 @@
                     answers = this._normalizeReplayAnswerMap(recordAnswersSource, entryExamId, allowUnprefixed);
                 }
 
-                let comparison = this._normalizeReplayComparison(
-                    this._isReplayObject(entry.answerComparison) ? entry.answerComparison : (this._isReplayObject(entry.realData?.answerComparison) ? entry.realData.answerComparison : {}),
+                let comparison = this._mergeReplayComparisonMapsFirstWins(
+                    {},
                     entryExamId,
-                    true
+                    true,
+                    entry.answerDetails,
+                    entry.realData?.answerDetails,
+                    entry.rawData?.answerDetails,
+                    entry.scoreInfo?.details,
+                    entry.realData?.scoreInfo?.details,
+                    entry.rawData?.scoreInfo?.details
                 );
+                const fallbackComparison = this._mergeReplayComparisonMapsFirstWins(
+                    {},
+                    entryExamId,
+                    true,
+                    entry.answerComparison,
+                    entry.realData?.answerComparison,
+                    entry.rawData?.answerComparison
+                );
+                Object.entries(fallbackComparison).forEach(([questionId, value]) => {
+                    if (Object.prototype.hasOwnProperty.call(comparison, questionId)) {
+                        return;
+                    }
+                    const fallback = this._cloneReviewData(value);
+                    if (fallback && typeof fallback === 'object') {
+                        fallback.isCorrect = null;
+                    }
+                    comparison[questionId] = fallback;
+                });
                 if (Object.keys(comparison).length === 0) {
-                    comparison = this._normalizeReplayComparison(recordComparisonSource, entryExamId, allowUnprefixed);
+                    comparison = this._mergeReplayComparisonMapsFirstWins(
+                        {},
+                        entryExamId,
+                        allowUnprefixed,
+                        record.answerDetails,
+                        record.realData?.answerDetails,
+                        record.rawData?.answerDetails,
+                        record.scoreInfo?.details,
+                        record.realData?.scoreInfo?.details,
+                        record.rawData?.scoreInfo?.details
+                    );
+                    const recordFallbackComparison = this._mergeReplayComparisonMapsFirstWins(
+                        {},
+                        entryExamId,
+                        allowUnprefixed,
+                        record.answerComparison,
+                        record.realData?.answerComparison,
+                        record.rawData?.answerComparison
+                    );
+                    Object.entries(recordFallbackComparison).forEach(([questionId, value]) => {
+                        if (Object.prototype.hasOwnProperty.call(comparison, questionId)) {
+                            return;
+                        }
+                        const fallback = this._cloneReviewData(value);
+                        if (fallback && typeof fallback === 'object') {
+                            fallback.isCorrect = null;
+                        }
+                        comparison[questionId] = fallback;
+                    });
                 }
+
+                const wrongReasons = this._mergeReplayAnswerMapsFirstWins(
+                    {},
+                    entryExamId,
+                    true,
+                    entry.wrongReasons,
+                    entry.realData?.wrongReasons,
+                    entry.rawData?.wrongReasons
+                );
+                this._mergeReplayAnswerMapsFirstWins(
+                    wrongReasons,
+                    entryExamId,
+                    allowUnprefixed,
+                    ...recordWrongReasonSources
+                );
 
                 const correctAnswers = this._resolveReplayCorrectAnswerMap(entry, {
                     examId: entryExamId,
@@ -2958,7 +3166,11 @@
                 }
 
                 comparison = this._finalizeReplayComparison(answers, correctAnswers, comparison);
-                const sourceScoreInfo = entry.scoreInfo || entry.realData?.scoreInfo || record.scoreInfo || record.realData?.scoreInfo;
+                this._applyReplayWrongReasonsToComparison(comparison, wrongReasons);
+                const sourceScoreInfo = this._buildReplayScoreInfoSnapshot(
+                    Object.assign({}, entry, { scoreInfo: entry.scoreInfo || entry.realData?.scoreInfo }),
+                    Object.assign({}, record, { scoreInfo: record.scoreInfo || record.realData?.scoreInfo })
+                );
                 const scoreInfo = this._deriveReplayScoreInfo(
                     sourceScoreInfo,
                     comparison,
@@ -2993,6 +3205,7 @@
                     correctAnswerMap: correctAnswers,
                     correctAnswers,
                     answerComparison: comparison,
+                    wrongReasons,
                     scoreInfo,
                     allQuestionIds: [],
                     startTime: entry.startTime || record.startTime || record.date || null,
@@ -3026,13 +3239,134 @@
             if (validEntries.length === 0) {
                 return null;
             }
+            const isSuiteRecord = Boolean(
+                record && (
+                    record.suiteMode
+                    || (Array.isArray(record.suiteEntries) && record.suiteEntries.length > 0)
+                    || record.suiteSessionId
+                    || record.metadata?.suiteSessionId
+                    || record.realData?.suiteSessionId
+                )
+            );
+            const recordId = record?.id ? String(record.id) : null;
+            const sourceSessionId = record?.sessionId ? String(record.sessionId) : null;
+            const suiteSessionId = record?.suiteSessionId
+                || record?.metadata?.suiteSessionId
+                || record?.realData?.suiteSessionId
+                || (isSuiteRecord ? (sourceSessionId || recordId) : null);
             return {
                 sessionId: `review_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+                recordId,
+                sourceSessionId,
+                suiteSessionId: suiteSessionId ? String(suiteSessionId) : null,
                 entries: validEntries,
                 currentIndex: 0,
                 windowRef: null,
                 readOnly: true
             };
+        },
+
+        _collectPracticeRecordExamIdCandidates(record, preferredExamId = '') {
+            if (!record || typeof record !== 'object') {
+                return preferredExamId ? [String(preferredExamId).trim()].filter(Boolean) : [];
+            }
+            const directCandidates = [
+                preferredExamId,
+                record.examId,
+                record.derivedExamId,
+                record.metadata && record.metadata.examId,
+                record.realData && record.realData.examId,
+                record.realData && record.realData.derivedExamId
+            ];
+            const seen = new Set();
+            return directCandidates
+                .map(candidate => candidate == null ? '' : String(candidate).trim())
+                .filter((candidate) => {
+                    if (!candidate || seen.has(candidate)) {
+                        return false;
+                    }
+                    seen.add(candidate);
+                    return true;
+                });
+        },
+
+        _getPracticeRecordTitle(record) {
+            if (!record || typeof record !== 'object') {
+                return '';
+            }
+            return String(
+                record.title
+                || (record.metadata && record.metadata.examTitle)
+                || (record.realData && record.realData.title)
+                || ''
+            ).trim();
+        },
+
+        _normalizePracticeRecordTitle(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[’‘]/g, "'")
+                .replace(/[“”]/g, '"')
+                .replace(/[\s\-_/]+/g, ' ')
+                .replace(/^[pc]\s*[123]\s*(low|medium|high|次高频|高频|中频|低频)?\s*/i, '')
+                .trim();
+        },
+
+        async _resolvePracticeRecordExam(record, preferredExamId = '') {
+            const examIndex = await getActiveExamIndexSnapshot();
+            const list = Array.isArray(examIndex) ? examIndex : (Array.isArray(window.examIndex) ? window.examIndex : []);
+            if (!Array.isArray(list) || list.length === 0) {
+                return null;
+            }
+
+            const candidates = this._collectPracticeRecordExamIdCandidates(record, preferredExamId);
+            for (const candidate of candidates) {
+                const matched = list.find(entry => entry && String(entry.id) === candidate);
+                if (matched) {
+                    return matched;
+                }
+            }
+
+            const title = this._normalizePracticeRecordTitle(this._getPracticeRecordTitle(record));
+            if (!title) {
+                return null;
+            }
+            return list.find((exam) => exam && this._normalizePracticeRecordTitle(exam.title) === title)
+                || list.find((exam) => exam && title.includes(this._normalizePracticeRecordTitle(exam.title)))
+                || list.find((exam) => exam && this._normalizePracticeRecordTitle(exam.title).includes(title))
+                || null;
+        },
+
+        async _resolvePracticeRecordExamId(record) {
+            const exam = await this._resolvePracticeRecordExam(record);
+            return exam && exam.id ? String(exam.id) : '';
+        },
+
+        async _navigatePracticeRecordFallbackExam(recordOrExamId, preferredExamId = '') {
+            const isRecord = recordOrExamId && typeof recordOrExamId === 'object';
+            const resolvedExam = await this._resolvePracticeRecordExam(
+                isRecord ? recordOrExamId : null,
+                isRecord ? preferredExamId : recordOrExamId
+            );
+            const resolvedExamId = resolvedExam && resolvedExam.id ? String(resolvedExam.id).trim() : '';
+            if (!resolvedExamId) {
+                return false;
+            }
+            const opened = await this.openExam(resolvedExamId);
+            if (opened) {
+                return resolvedExamId;
+            }
+
+            const exam = resolvedExam;
+            const targetUrl = typeof this._ensureAbsoluteUrl === 'function'
+                ? this._ensureAbsoluteUrl(this.buildExamUrl(exam))
+                : this.buildExamUrl(exam);
+            if (!targetUrl) {
+                return false;
+            }
+            window.location.href = targetUrl;
+            return resolvedExamId;
         },
 
         _bindReviewWindowRef(reviewSessionId, windowRef) {
@@ -3054,6 +3388,10 @@
             const current = session.entries[safeIndex] || {};
             return {
                 reviewSessionId: session.sessionId,
+                recordId: session.recordId || null,
+                practiceRecordId: session.recordId || null,
+                sessionId: session.sourceSessionId || null,
+                suiteSessionId: session.suiteSessionId || null,
                 index: safeIndex + 1,
                 currentIndex: safeIndex,
                 total,
@@ -3076,6 +3414,10 @@
             }
             const replayPayload = {
                 reviewSessionId: session.sessionId,
+                recordId: session.recordId || null,
+                practiceRecordId: session.recordId || null,
+                sessionId: session.sourceSessionId || null,
+                suiteSessionId: session.suiteSessionId || null,
                 reviewEntryIndex: safeIndex,
                 readOnly: session.readOnly !== false,
                 entry: this._cloneReviewData(entry)
@@ -3190,6 +3532,14 @@
         async openPracticeRecordReplay(record) {
             const session = this._buildReviewSession(record);
             if (!session) {
+                const opened = await this._navigatePracticeRecordFallbackExam(record);
+                if (opened) {
+                    return {
+                        fallback: true,
+                        examId: String(opened),
+                        reason: 'missing-review-session'
+                    };
+                }
                 throw new Error('该练习记录缺少可回放的题目映射');
             }
             const store = this._ensureReviewReplayStore();
@@ -3201,7 +3551,10 @@
                 throw new Error('无法解析首题题目标识');
             }
 
-            const openedWindow = await this.openExam(firstEntry.examId, {
+            const resolvedFirstExam = await this._resolvePracticeRecordExam(record, firstEntry.examId);
+            const firstExamId = resolvedFirstExam && resolvedFirstExam.id ? String(resolvedFirstExam.id) : firstEntry.examId;
+
+            const openedWindow = await this.openExam(firstExamId, {
                 reviewMode: true,
                 readOnly: true,
                 reviewSessionId: session.sessionId,
@@ -3209,6 +3562,14 @@
             });
             if (!openedWindow) {
                 store.delete(session.sessionId);
+                const fallbackOpened = await this._navigatePracticeRecordFallbackExam(record, firstEntry.examId);
+                if (fallbackOpened) {
+                    return {
+                        fallback: true,
+                        examId: String(fallbackOpened),
+                        reason: 'review-window-open-failed'
+                    };
+                }
                 throw new Error('无法打开回顾页面');
             }
             this._bindReviewWindowRef(session.sessionId, openedWindow);
@@ -4267,6 +4628,32 @@
         },
 
         /**
+         * 构建结果页题目标签
+         */
+        buildExamResultMetaTags(exam) {
+            if (!exam) {
+                return '';
+            }
+            const frequencyLabel = typeof window.formatFrequencyLabel === 'function'
+                ? window.formatFrequencyLabel(exam.frequency)
+                : String(exam.frequency || '').trim();
+            const difficultyLabel = typeof window.formatDifficultyLabel === 'function'
+                ? window.formatDifficultyLabel(exam.difficultyScore)
+                : (Number.isFinite(Number(exam.difficultyScore)) ? `难度 ${exam.difficultyScore}` : '');
+            const tags = [frequencyLabel, difficultyLabel].filter(Boolean);
+            if (!tags.length) {
+                return '';
+            }
+            const escape = (value) => String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+            return `<div class="result-meta-tags">${tags.map(tag => `<span class="result-meta-tag">${escape(tag)}</span>`).join('')}</div>`;
+        },
+
+        /**
          * 显示题目完成通知
          */
         async showExamCompletionNotification(examId, resultData) {
@@ -4295,6 +4682,7 @@
 
             const accuracy = Math.round((resultData.accuracy || 0) * 100);
             const duration = this.formatDuration(resultData.duration || 0);
+            const resultMetaTags = this.buildExamResultMetaTags(exam);
 
             const resultContent = `
                 <div class="exam-result-modal">
@@ -4306,6 +4694,7 @@
                     </div>
                     <div class="result-body">
                         <h4>${exam.title}</h4>
+                        ${resultMetaTags}
                         <div class="result-stats">
                             <div class="result-stat">
                                 <span class="stat-label">正确率</span>
@@ -4481,6 +4870,7 @@
 
             const accuracy = Math.round((practiceRecord.accuracy || 0) * 100);
             const duration = this.formatDuration(practiceRecord.duration || 0);
+            const resultMetaTags = this.buildExamResultMetaTags(exam);
 
             const resultContent = `
                 <div class="practice-result-modal">
@@ -4492,6 +4882,7 @@
                     </div>
                     <div class="result-body">
                         <h4>${exam.title}</h4>
+                        ${resultMetaTags}
                         <div class="result-stats">
                             <div class="result-stat">
                                 <span class="stat-label">正确率</span>

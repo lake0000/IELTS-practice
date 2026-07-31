@@ -148,6 +148,15 @@
         return null;
     }
 
+    function deriveExamIdFromSessionId(value) {
+        const text = String(value || '').trim();
+        if (!text) {
+            return null;
+        }
+        const match = text.match(/^([pc]\d-(?:low|medium|high)-\d+)(?:_|$)/i);
+        return match ? match[1] : null;
+    }
+
     function resolveDurationSeconds(recordData = {}, startTime = null, endTime = null) {
         const realData = isPlainObject(recordData.realData) ? recordData.realData : {};
         const scoreInfo = isPlainObject(recordData.scoreInfo)
@@ -248,10 +257,18 @@
         const metadata = isPlainObject(recordData.metadata) ? recordData.metadata : {};
         const direct = firstStringCandidate(
             recordData.examId,
+            recordData.dataKey,
             recordData.exam_id,
             recordData.examID,
             metadata.examId,
-            metadata.exam_id
+            metadata.dataKey,
+            metadata.exam_id,
+            recordData.realData && recordData.realData.examId,
+            recordData.realData && recordData.realData.dataKey,
+            deriveExamIdFromSessionId(recordData.sessionId),
+            deriveExamIdFromSessionId(recordData.id),
+            deriveExamIdFromSessionId(metadata.sessionId),
+            deriveExamIdFromSessionId(recordData.realData && recordData.realData.sessionId)
         );
         if (direct) {
             return direct;
@@ -493,8 +510,42 @@
                 correctAnswer,
                 isCorrect: typeof entry.isCorrect === 'boolean' ? entry.isCorrect : null
             };
+            const wrongReason = normalizeWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote);
+            if (wrongReason) {
+                normalized[questionId].wrongReason = wrongReason;
+            }
         });
 
+        return normalized;
+    }
+
+    function normalizeWrongReason(value) {
+        const source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        const category = normalizeAnswerValue(source.category ?? source.reason ?? source.type);
+        const note = normalizeAnswerValue(source.note ?? source.detail ?? source.text);
+        if (!category && !note) {
+            return null;
+        }
+        return {
+            category,
+            note,
+            updatedAt: source.updatedAt || new Date().toISOString()
+        };
+    }
+
+    function normalizeWrongReasonMap(value) {
+        if (!value || typeof value !== 'object') {
+            return {};
+        }
+        const normalized = {};
+        Object.entries(value).forEach(([questionId, reason]) => {
+            const normalizedReason = normalizeWrongReason(reason);
+            if (normalizedReason) {
+                normalized[questionId] = normalizedReason;
+            }
+        });
         return normalized;
     }
 
@@ -851,6 +902,8 @@
         metadata.frequency = metadata.frequency || fallbackFrequency;
         metadata.type = type;
         metadata.examType = metadata.examType || type;
+        metadata.examId = metadata.examId || examId || null;
+        metadata.dataKey = metadata.dataKey || recordData.dataKey || examId || null;
         if (recordData.suiteSessionId && !metadata.suiteSessionId) {
             metadata.suiteSessionId = recordData.suiteSessionId;
         }
@@ -910,6 +963,11 @@
                 answers: answerMap,
                 correctAnswerMap: entryCorrectMap,
                 answerComparison: clonePlainObject(answerComparisonSource) || null,
+                wrongReasons: Object.assign(
+                    {},
+                    normalizeWrongReasonMap(entry.wrongReasons),
+                    normalizeWrongReasonMap(entry.rawData && entry.rawData.wrongReasons)
+                ),
                 metadata: entry.metadata ? Object.assign({}, entry.metadata) : {},
                 highlights,
                 scrollY,
@@ -1075,6 +1133,49 @@
         const normalizedComparison = comparisonSource && typeof comparisonSource === 'object'
             ? clonePlainObject(comparisonSource)
             : null;
+        const normalizedWrongReasons = Object.assign(
+            {},
+            normalizeWrongReasonMap(recordData.wrongReasons),
+            normalizeWrongReasonMap(recordData.realData && recordData.realData.wrongReasons)
+        );
+        if (normalizedComparison) {
+            Object.entries(normalizedComparison).forEach(([questionId, entry]) => {
+                const reason = normalizeWrongReason(entry && (entry.wrongReason || entry.errorReason || entry.wrongReasonNote));
+                if (reason) {
+                    normalizedWrongReasons[questionId] = reason;
+                    entry.wrongReason = reason;
+                }
+            });
+        }
+        normalizedSuiteEntries.forEach((entry) => {
+            if (!entry || !entry.examId) {
+                return;
+            }
+            const prefix = `${entry.examId}::`;
+            const entryReasons = Object.assign(
+                {},
+                normalizeWrongReasonMap(entry.wrongReasons),
+                normalizeWrongReasonMap(entry.rawData && entry.rawData.wrongReasons)
+            );
+            Object.entries(entryReasons).forEach(([questionId, reason]) => {
+                normalizedWrongReasons[prefix + questionId] = reason;
+            });
+            const entryComparison = entry.answerComparison && typeof entry.answerComparison === 'object'
+                ? entry.answerComparison
+                : {};
+            Object.entries(entryComparison).forEach(([questionId, comparisonEntry]) => {
+                const reason = normalizeWrongReason(comparisonEntry && (
+                    comparisonEntry.wrongReason || comparisonEntry.errorReason || comparisonEntry.wrongReasonNote
+                ));
+                if (reason) {
+                    normalizedWrongReasons[prefix + questionId] = reason;
+                    comparisonEntry.wrongReason = reason;
+                    if (normalizedComparison && normalizedComparison[prefix + questionId]) {
+                        normalizedComparison[prefix + questionId].wrongReason = reason;
+                    }
+                }
+            });
+        });
         const realDataCorrectAnswers = clonePlainObject(normalizedCorrectMap || {});
         const generateRecordId = typeof options.generateRecordId === 'function'
             ? options.generateRecordId
@@ -1083,6 +1184,8 @@
         return {
             id: recordId || generateRecordId(),
             examId: resolvedExamId,
+            dataKey: recordData.dataKey || metadata.dataKey || resolvedExamId,
+            derivedExamId: recordData.derivedExamId || metadata.derivedExamId || resolvedExamId,
             sessionId: recordData.sessionId || recordData.sessionID || null,
             title: resolvedTitle,
             type,
@@ -1098,6 +1201,7 @@
             answers: normalizedAnswers,
             answerDetails: detailSource || null,
             correctAnswerMap: normalizedCorrectMap || {},
+            wrongReasons: normalizedWrongReasons,
             questionTypePerformance: recordData.questionTypePerformance || {},
             metadata,
             frequency: recordData.frequency || metadata.frequency || null,
@@ -1111,17 +1215,31 @@
                 : (detailSource ? { details: detailSource } : null),
             realData: recordData.realData
                 ? Object.assign({}, recordData.realData, {
+                    examId: recordData.realData.examId || resolvedExamId,
+                    dataKey: recordData.realData.dataKey || recordData.dataKey || metadata.dataKey || resolvedExamId,
+                    derivedExamId: recordData.realData.derivedExamId || recordData.derivedExamId || metadata.derivedExamId || resolvedExamId,
                     answers: (recordData.realData && recordData.realData.answers) || answerMap,
                     correctAnswers: realDataCorrectAnswers,
                     correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
+                    wrongReasons: clonePlainObject(normalizedWrongReasons),
                     scoreInfo: Object.assign({}, (recordData.realData && recordData.realData.scoreInfo) || {}, {
                         details: (recordData.realData && recordData.realData.scoreInfo && recordData.realData.scoreInfo.details) || detailSource || null
                     }),
-                    answerComparison: (recordData.realData && recordData.realData.answerComparison)
+                    answerComparison: normalizedComparison || ((recordData.realData && recordData.realData.answerComparison)
                         ? clonePlainObject(recordData.realData.answerComparison)
-                        : (normalizedComparison || null)
+                        : null)
                 })
-                : (normalizedComparison ? { answerComparison: normalizedComparison } : null),
+                : {
+                    examId: resolvedExamId,
+                    dataKey: recordData.dataKey || metadata.dataKey || resolvedExamId,
+                    derivedExamId: recordData.derivedExamId || metadata.derivedExamId || resolvedExamId,
+                    answers: answerMap,
+                    correctAnswers: realDataCorrectAnswers,
+                    correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
+                    wrongReasons: clonePlainObject(normalizedWrongReasons),
+                    scoreInfo: detailSource ? { details: detailSource } : null,
+                    answerComparison: normalizedComparison || null
+                },
             answerComparison: normalizedComparison,
             version: options.currentVersion || recordData.version || '0.6.2-fix',
             createdAt: firstDateCandidate(recordData.createdAt, recordData.startTime, recordData.start_time, recordDate) || now,
@@ -1258,9 +1376,14 @@
         const scoreInfo = Object.assign({}, rawPayload.scoreInfo || {});
         const metadata = Object.assign({}, sessionContext.metadata || {}, rawPayload.metadata || {});
         const resolvedExamId = rawPayload.examId
+            || rawPayload.dataKey
             || sessionContext.examId
+            || sessionContext.dataKey
             || metadata.examId
+            || metadata.dataKey
             || (examEntry && examEntry.id)
+            || deriveExamIdFromSessionId(rawPayload.sessionId)
+            || deriveExamIdFromSessionId(sessionContext.sessionId)
             || null;
         const answerComparison = normalizeAnswerComparison(
             rawPayload.answerComparison || (rawPayload.realData && rawPayload.realData.answerComparison) || null
@@ -1306,7 +1429,39 @@
         const percentage = typeof scoreInfo.percentage === 'number'
             ? scoreInfo.percentage
             : Math.round(accuracy * 100);
-        const completedAt = resolveRecordDate({
+        const timerSnapshot = isPlainObject(rawPayload.timerSnapshot) ? rawPayload.timerSnapshot : {};
+        const submittedStartTime = firstDateCandidate(
+            rawPayload.startTime,
+            sessionContext.startTime,
+            metadata.startedAt,
+            timerSnapshot.effectiveStartTimeMs
+        );
+        const submittedEffectiveEndTime = firstDateCandidate(
+            rawPayload.effectiveEndTime,
+            rawPayload.effectiveEndTimeMs,
+            timerSnapshot.effectiveEndTime,
+            timerSnapshot.effectiveEndTimeMs
+        );
+        const payloadEndTime = firstDateCandidate(
+            rawPayload.endTime,
+            rawPayload.completedAt,
+            rawPayload.date,
+            rawPayload.timestamp
+        );
+        const fallbackDuration = (submittedStartTime && (submittedEffectiveEndTime || payloadEndTime))
+            ? Math.max(0, Math.round((
+                new Date(submittedEffectiveEndTime || payloadEndTime).getTime() - new Date(submittedStartTime).getTime()
+            ) / 1000))
+            : ensureNumber(sessionContext.duration, 0);
+        const duration = ensureNumber(
+            rawPayload.duration
+                ?? timerSnapshot.durationSeconds
+                ?? rawPayload.durationSeconds
+                ?? rawPayload.elapsedSeconds
+                ?? rawPayload.elapsed,
+            fallbackDuration
+        );
+        const fallbackCompletedAt = resolveRecordDate({
             metadata,
             date: rawPayload.date,
             endTime: rawPayload.endTime,
@@ -1314,20 +1469,16 @@
             startTime: rawPayload.startTime,
             timestamp: rawPayload.timestamp
         });
-        const duration = ensureNumber(
-            rawPayload.duration,
-            (rawPayload.endTime && rawPayload.startTime)
-                ? Math.round((new Date(rawPayload.endTime) - new Date(rawPayload.startTime)) / 1000)
-                : ensureNumber(sessionContext.duration, 0)
-        );
-        const startTime = rawPayload.startTime
-            ? new Date(rawPayload.startTime).toISOString()
-            : (sessionContext.startTime
-                ? new Date(sessionContext.startTime).toISOString()
-                : new Date(new Date(completedAt).getTime() - duration * 1000).toISOString());
-        const endTime = rawPayload.endTime
-            ? new Date(rawPayload.endTime).toISOString()
-            : completedAt;
+        const startTime = submittedStartTime
+            || new Date(new Date(submittedEffectiveEndTime || payloadEndTime || fallbackCompletedAt).getTime() - duration * 1000).toISOString();
+        const durationEndTime = duration >= 0
+            ? new Date(new Date(startTime).getTime() + duration * 1000).toISOString()
+            : null;
+        const endTime = submittedEffectiveEndTime
+            || durationEndTime
+            || payloadEndTime
+            || fallbackCompletedAt;
+        const completedAt = endTime;
         const category = deriveCategory(rawPayload, examEntry, metadata);
         const frequency = deriveFrequency(rawPayload, examEntry, metadata);
         const title = rawPayload.title
@@ -1367,6 +1518,8 @@
         return standardizeRecord({
             id: rawPayload.id,
             examId: resolvedExamId,
+            dataKey: rawPayload.dataKey || metadata.dataKey || sessionContext.dataKey || resolvedExamId,
+            derivedExamId: rawPayload.derivedExamId || metadata.derivedExamId || resolvedExamId,
             sessionId: rawPayload.sessionId || sessionContext.sessionId || null,
             title,
             type: rawPayload.type || metadata.type || metadata.examType || (examEntry && examEntry.type) || sessionContext.type || null,
@@ -1386,6 +1539,8 @@
             questionTypePerformance: rawPayload.questionTypePerformance || {},
             metadata: Object.assign({}, metadata, {
                 examId: resolvedExamId,
+                dataKey: rawPayload.dataKey || metadata.dataKey || sessionContext.dataKey || resolvedExamId,
+                derivedExamId: rawPayload.derivedExamId || metadata.derivedExamId || resolvedExamId,
                 examTitle: title,
                 category,
                 frequency,
@@ -1409,6 +1564,9 @@
                 source: scoreInfo.source || rawPayload.pageType || rawPayload.source || 'practice_page'
             }),
             realData: Object.assign({}, rawPayload.realData || {}, {
+                examId: rawPayload.realData?.examId || resolvedExamId,
+                dataKey: rawPayload.realData?.dataKey || rawPayload.dataKey || metadata.dataKey || sessionContext.dataKey || resolvedExamId,
+                derivedExamId: rawPayload.realData?.derivedExamId || rawPayload.derivedExamId || metadata.derivedExamId || resolvedExamId,
                 answers: answerMap,
                 correctAnswers: correctAnswerMap,
                 answerComparison,
@@ -1502,20 +1660,57 @@
         }
         const scoreInfo = record.scoreInfo || {};
         const metadata = record.metadata || {};
+        const projectComparisonSummary = (source) => {
+            if (!source || typeof source !== 'object') {
+                return null;
+            }
+            const projected = {};
+            Object.entries(source).forEach(([questionId, entry]) => {
+                if (!entry || typeof entry !== 'object') {
+                    return;
+                }
+                const reason = normalizeWrongReason(entry.wrongReason || entry.errorReason || entry.wrongReasonNote);
+                projected[questionId] = {
+                    isCorrect: typeof entry.isCorrect === 'boolean' ? entry.isCorrect : null,
+                    questionNumber: entry.questionNumber || entry.displayNumber || entry.number || null,
+                    displayNumber: entry.displayNumber || entry.questionNumber || entry.number || null
+                };
+                if (reason) {
+                    projected[questionId].wrongReason = reason;
+                }
+            });
+            return Object.keys(projected).length ? projected : null;
+        };
+        const projectWrongReasons = (recordLike) => Object.assign(
+            {},
+            normalizeWrongReasonMap(recordLike && recordLike.wrongReasons),
+            normalizeWrongReasonMap(recordLike && recordLike.realData && recordLike.realData.wrongReasons),
+            normalizeWrongReasonMap(recordLike && recordLike.rawData && recordLike.rawData.wrongReasons)
+        );
         // 轻量 suiteEntries 投影：仅保留签名字段，不含 answers/correctAnswerMap/realData
         const rawSuiteEntries = Array.isArray(record.suiteEntries) ? record.suiteEntries : [];
         const suiteEntries = rawSuiteEntries.map(function (entry) {
             if (!entry || typeof entry !== 'object') { return null; }
             const entryMeta = entry.metadata || {};
             const entryScore = entry.scoreInfo || {};
+            const entryWrongReasons = projectWrongReasons(entry);
+            const entryComparison = projectComparisonSummary(
+                entry.answerComparison || (entry.rawData && entry.rawData.answerComparison) || (entryScore && entryScore.details)
+            );
             return {
                 id: entry.id || '',
                 examId: entry.examId || entryMeta.examId || '',
                 title: entry.title || entryMeta.examTitle || '',
                 percentage: Number(entry.percentage != null ? entry.percentage : entryScore.percentage) || 0,
-                duration: Number(entry.duration != null ? entry.duration : (entry.rawData && entry.rawData.duration)) || 0
+                duration: Number(entry.duration != null ? entry.duration : (entry.rawData && entry.rawData.duration)) || 0,
+                wrongReasons: entryWrongReasons,
+                answerComparison: entryComparison
             };
         }).filter(Boolean);
+        const wrongReasons = projectWrongReasons(record);
+        const answerComparison = projectComparisonSummary(
+            record.answerComparison || (record.realData && record.realData.answerComparison) || record.answerDetails || (scoreInfo && scoreInfo.details)
+        );
         return {
             id: record.id || record.sessionId || '',
             sessionId: record.sessionId || null,
@@ -1537,6 +1732,8 @@
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
             suiteEntries: suiteEntries,
+            wrongReasons,
+            answerComparison,
             suiteSessionId: record.suiteSessionId || (metadata.suiteSessionId) || null,
             // questionTypePerformance 是小对象（每题型 {total,correct}），不是重字段，保留供 recalculateStats 使用
             questionTypePerformance: record.questionTypePerformance || null,

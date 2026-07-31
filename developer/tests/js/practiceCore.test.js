@@ -115,6 +115,35 @@ async function testCompletionIngestion(PracticeCore) {
     recordResult('PracticeCore 完成负载入站', true, { id: record.id, metadata: record.metadata });
 }
 
+async function testCompletionIngestionDerivesCanonicalIdFromSessionPrefix(PracticeCore) {
+    const record = PracticeCore.ingestor.fromCompletion({
+        type: 'practice_complete',
+        data: {
+            sessionId: 'p1-medium-63_1785165444503_original',
+            title: 'A Brief History of Humans and Food',
+            duration: 1200,
+            answers: { q9: '' },
+            correctAnswerMap: { q9: 'glass' },
+            scoreInfo: { correct: 0, total: 1, accuracy: 0, percentage: 0 },
+            metadata: { category: 'P1', frequency: 'medium', type: 'reading' }
+        }
+    });
+
+    assert(record, '标准 session 前缀应能推导 canonical 记录');
+    assert.strictEqual(record.examId, 'p1-medium-63');
+    assert.strictEqual(record.dataKey, 'p1-medium-63');
+    assert.strictEqual(record.derivedExamId, 'p1-medium-63');
+    assert.strictEqual(record.metadata.examId, 'p1-medium-63');
+    assert.strictEqual(record.metadata.dataKey, 'p1-medium-63');
+    assert.strictEqual(record.realData.examId, 'p1-medium-63');
+    assert.strictEqual(record.realData.dataKey, 'p1-medium-63');
+
+    recordResult('PracticeCore session 前缀推导 canonical id', true, {
+        examId: record.examId,
+        sessionId: record.sessionId
+    });
+}
+
 async function testPracticeRecordApiWritePath(sandbox, PracticeCore, practiceState, metaState) {
     assert.strictEqual(typeof PracticeCore.store.savePracticeRecord, 'undefined', '公开 PracticeCore.store 不能暴露记录写入口');
     assert.strictEqual(typeof PracticeCore.store.replacePracticeRecords, 'undefined', '公开 PracticeCore.store 不能暴露批量替换入口');
@@ -365,6 +394,114 @@ async function testPracticeRecordApiStatsIdempotency(sandbox, practiceState, met
     recordResult('PracticeRecordAPI 统计幂等', true, {
         totalRecords: practiceState.length,
         totalPractices: stats.totalPractices
+    });
+}
+
+async function testCompletionTimingUsesSubmittedDuration(PracticeCore) {
+    const record = PracticeCore.ingestor.fromCompletion({
+        type: 'PRACTICE_COMPLETE',
+        data: {
+            examId: 'reading-submit-timing',
+            sessionId: 'session-submit-timing',
+            title: 'Submit Timing',
+            startTime: '2026-07-27T10:00:00.000Z',
+            endTime: '2026-07-27T10:45:00.000Z',
+            duration: 300,
+            answers: { q1: 'A' },
+            correctAnswerMap: { q1: 'A' },
+            scoreInfo: { correct: 1, total: 1, accuracy: 1, percentage: 100 },
+            metadata: { category: 'P1', frequency: 'high', type: 'reading' }
+        }
+    }, {}, {
+        id: 'reading-submit-timing',
+        title: 'Submit Timing',
+        category: 'P1',
+        frequency: 'high',
+        type: 'reading'
+    });
+
+    assert(record, '完成记录应成功生成');
+    assert.strictEqual(record.duration, 300, '用时必须取提交时 duration，不能用提交后停留差值');
+    assert.strictEqual(record.startTime, '2026-07-27T10:00:00.000Z');
+    assert.strictEqual(record.endTime, '2026-07-27T10:05:00.000Z', '没有 effectiveEndTime 时应由 startTime + duration 得到完成时间');
+    assert.strictEqual(record.date, '2026-07-27T10:05:00.000Z', '记录日期应使用做题提交完成时间');
+
+    const explicitEffective = PracticeCore.ingestor.fromCompletion({
+        type: 'PRACTICE_COMPLETE',
+        data: {
+            examId: 'reading-submit-effective',
+            sessionId: 'session-submit-effective',
+            title: 'Submit Effective Timing',
+            startTime: '2026-07-27T12:00:00.000Z',
+            endTime: '2026-07-27T13:30:00.000Z',
+            effectiveEndTime: '2026-07-27T12:06:00.000Z',
+            duration: 360,
+            answers: { q1: 'A' },
+            correctAnswerMap: { q1: 'B' },
+            scoreInfo: { correct: 0, total: 1, accuracy: 0, percentage: 0 },
+            metadata: { category: 'P1', frequency: 'high', type: 'reading' }
+        }
+    });
+    assert.strictEqual(explicitEffective.endTime, '2026-07-27T12:06:00.000Z', 'effectiveEndTime 应优先于后续停留 endTime');
+    assert.strictEqual(explicitEffective.date, '2026-07-27T12:06:00.000Z');
+
+    recordResult('PracticeCore 提交用时不含改错停留', true, {
+        endTime: record.endTime,
+        effectiveEndTime: explicitEffective.endTime
+    });
+}
+
+async function testWrongReasonSaveKeepsOriginalTiming(sandbox, practiceState) {
+    const api = sandbox.window.PracticeRecordAPI;
+    await api.clear({ maxRecords: 1000, updateStats: true });
+
+    const baseRecord = await api.saveRecord({
+        id: 'record-wrong-reason-stable',
+        examId: 'reading-wrong-reason-stable',
+        sessionId: 'session-wrong-reason-stable',
+        title: 'Wrong Reason Stable',
+        type: 'reading',
+        startTime: '2026-07-27T09:00:00.000Z',
+        endTime: '2026-07-27T09:20:00.000Z',
+        date: '2026-07-27T09:20:00.000Z',
+        createdAt: '2026-07-27T09:00:00.000Z',
+        updatedAt: '2026-07-27T09:20:00.000Z',
+        duration: 1200,
+        score: 0,
+        totalQuestions: 1,
+        correctAnswers: 0,
+        accuracy: 0,
+        answers: { q1: 'A' },
+        correctAnswerMap: { q1: 'B' },
+        answerComparison: {
+            q1: { questionId: 'q1', userAnswer: 'A', correctAnswer: 'B', isCorrect: false }
+        },
+        metadata: { examTitle: 'Wrong Reason Stable', category: 'P1', frequency: 'high', type: 'reading' }
+    }, { maxRecords: 1000 });
+
+    const updated = await api.saveRecord(Object.assign({}, baseRecord, {
+        wrongReasons: {
+            q1: { category: '定位错误', note: '测试错因', updatedAt: '2026-07-27T10:00:00.000Z' }
+        },
+        metadata: Object.assign({}, baseRecord.metadata, {
+            wrongReasonUpdatedAt: '2026-07-27T10:00:00.000Z'
+        })
+    }), { maxRecords: 1000, updateStats: false });
+
+    assert.strictEqual(practiceState.length, 1, '错因保存不能新增重复练习记录');
+    assert.strictEqual(updated.id, baseRecord.id, '错因保存必须更新原 record id');
+    assert.strictEqual(updated.sessionId, baseRecord.sessionId, '错因保存必须保留原 sessionId');
+    assert.strictEqual(updated.startTime, baseRecord.startTime, '错因保存不能改 startTime');
+    assert.strictEqual(updated.endTime, baseRecord.endTime, '错因保存不能改 endTime');
+    assert.strictEqual(updated.date, baseRecord.date, '错因保存不能改 date');
+    assert.strictEqual(updated.duration, baseRecord.duration, '错因保存不能改 duration');
+    assert.strictEqual(updated.updatedAt, baseRecord.updatedAt, '错因保存不能把练习更新时间改成错因时间');
+    assert.strictEqual(updated.wrongReasons.q1.category, '定位错误');
+
+    recordResult('PracticeRecordAPI 错因保存不新增且不改练习时间', true, {
+        recordId: updated.id,
+        duration: updated.duration,
+        endTime: updated.endTime
     });
 }
 
@@ -659,9 +796,12 @@ async function main() {
     try {
         await testProtocolNormalization(PracticeCore);
         await testCompletionIngestion(PracticeCore);
+        await testCompletionIngestionDerivesCanonicalIdFromSessionPrefix(PracticeCore);
         await testPracticeRecordApiWritePath(sandbox, PracticeCore, practiceState, metaState);
         await testPracticeRecordApiContract(sandbox, PracticeCore, practiceState, metaState);
         await testPracticeRecordApiStatsIdempotency(sandbox, practiceState, metaState);
+        await testCompletionTimingUsesSubmittedDuration(PracticeCore);
+        await testWrongReasonSaveKeepsOriginalTiming(sandbox, practiceState);
         await testNumericCorrectAnswersRemainScoreCount(PracticeCore);
         await testObjectCorrectAnswersBecomeCorrectAnswerMap(PracticeCore);
         await testSuiteEntryCorrectAnswerMapSurvives(PracticeCore);
