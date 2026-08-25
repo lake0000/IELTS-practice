@@ -44,6 +44,102 @@
       "text": "在21世纪，我们正在重新发明掌声，使其回归曾经的样子：一种编码形式的交流。数字世界越来越多地允许我们通过设备进行连接、点赞和分享。通过这种方式与他人联系，我们通过参与表演成为表演的一部分，通过评论和赞美来放大和延续演出来表达我们的欣赏。我们的掌声在许多方面现在更加重要，因为它不再是瞬间即逝的，而是变得更加持久。"
     }
   ],
-  "questionExplanations": []
+  "questionExplanations": [
+    {
+      "sectionTitle": "1. 段落标题匹配（Questions 14-20）",
+      "mode": "group",
+      "items": [
+        {
+          "questionNumber": 14,
+          "questionId": "q1",
+          "text": "题目 14：Paragraph A\n答案：iii\n解析：Paragraph A 先说明 scholars are not sure about the origins of applause，随后指出 clapping the hands together 在西方演出中正式形成，并举罗马戏剧结束时主角喊 Valete et plaudite 的例子。因此本段核心是掌声作为剧场行为的早期出现，对应 iii The initial emergence of applause as a behaviour in the theatre。"
+        },
+        {
+          "questionNumber": 15,
+          "questionId": "q2",
+          "text": "题目 15：Paragraph B\n答案：v\n解析：Paragraph B 说罗马领导者会通过进入竞技场时获得的掌声来判断自己在民众中的地位，并把这称作 an ancient type of opinion poll。因此本段讲政治人物用掌声评估自己受欢迎程度，对应 v。"
+        },
+        {
+          "questionNumber": 16,
+          "questionId": "q3",
+          "text": "题目 16：Paragraph C\n答案：x\n解析：Paragraph C 讲 Cicero 会派朋友在竞技场外记录每位官员得到的问候，以判断谁受民众喜爱、谁不受欢迎。因此本段重点是通过掌声判断对手人气，对应 x The use of applause in working out how popular an opponent was。"
+        },
+        {
+          "questionNumber": 17,
+          "questionId": "q4",
+          "text": "题目 17：Paragraph D\n答案：vii\n解析：Paragraph D 说古希腊罗马观众的鼓掌策略不止 clapping alone，还包括 snaps、waves 等多种认可方式。因此本段讲古代除拍手外的不同掌声方法，对应 vii。"
+        },
+        {
+          "questionNumber": 18,
+          "questionId": "q5",
+          "text": "题目 18：Paragraph E\n答案：viii\n解析：Paragraph E 讲 Jean Daurat 恢复雇佣专业鼓掌者的罗马做法，法国 claque 后来制度化，又因人们识破把戏而失去影响力。因此本段对应 viii The re-emergence and disappearance of fake appreciation。"
+        },
+        {
+          "questionNumber": 19,
+          "questionId": "q6",
+          "text": "题目 19：Paragraph F\n答案：i\n解析：Paragraph F 讲 18 世纪交响乐和音乐会变得严肃，观众需要知道何时保持安静、何时鼓掌，掌声成为一种礼仪规则。因此本段对应 i The impact of musical performance on the etiquette of applause。"
+        },
+        {
+          "questionNumber": 20,
+          "questionId": "q7",
+          "text": "题目 20：Paragraph G\n答案：iv\n解析：Paragraph G 讲数字世界让人们通过 link、like、share、commenting and praising 延续表演，现代掌声不再 momentary and short-lived，而是 far more permanent。因此本段对应 iv A form of applause that is more far-reaching than ever before。"
+        }
+      ],
+      "questionRange": {
+        "start": 14,
+        "end": 20
+      }
+    },
+    {
+      "sectionTitle": "2. 多选题（Questions 21-22）",
+      "mode": "group",
+      "items": [
+        {
+          "questionNumber": 21,
+          "questionId": "q8",
+          "text": "题目 21：Which TWO statements are true of the claque in France?\n答案：A\n解析：Paragraph E 明确说 16th-century French poet Jean Daurat is credited with bringing back the Roman practice of hiring professional applauders，说明 claque 这种做法在法国可追溯到 16 世纪，A 正确。"
+        },
+        {
+          "questionNumber": 22,
+          "questionId": "q9",
+          "text": "题目 22：Which TWO statements are true of the claque in France?\n答案：D\n解析：Paragraph E 说 claque underwent a kind of classification，并列出 rieurs、pleureurs、commissaires 等不同类别，说明 claqueurs 被分成不同类型，D 正确。B 与 institutionalized 矛盾；C 的收费取决于掌声类型，不是客户名气；E 与 spread to Milan, Vienna, and London 矛盾。"
+        }
+      ],
+      "questionRange": {
+        "start": 21,
+        "end": 22
+      }
+    },
+    {
+      "sectionTitle": "3. 摘要填空（Questions 23-26）",
+      "mode": "group",
+      "items": [
+        {
+          "questionNumber": 23,
+          "questionId": "q10",
+          "text": "题目 23：people could show their superiority by understanding when either ____ or applause was appropriate.\n答案：silence\n解析：Paragraph F 中 Knowing when to maintain silence, as well as when to clap, became a mark of sophistication 与题干对应，空格和 applause 并列，因此答案为 silence。"
+        },
+        {
+          "questionNumber": 24,
+          "questionId": "q11",
+          "text": "题目 24：Performers in the 18th century, in particular those singing in the ____, no longer had a meaningful dialogue with their audiences.\n答案：opera\n解析：Paragraph F 中 Applause became much less of a true dialogue with an audience, especially so with opera 直接对应题干 no longer had a meaningful dialogue，答案为 opera。"
+        },
+        {
+          "questionNumber": 25,
+          "questionId": "q12",
+          "text": "题目 25：In the 19th century, applause was no longer offered as a ____ to performers.\n答案：reward\n解析：Paragraph F 结尾说 applause had become an expectation rather than the reward it used to be，题干 no longer offered as a ____ 对应 rather than the reward，答案为 reward。"
+        },
+        {
+          "questionNumber": 26,
+          "questionId": "q13",
+          "text": "题目 26：Nowadays our expressions of approval are seen as ____ in comparison to the applause of the past.\n答案：permanent\n解析：Paragraph G 说现代 applause is no longer momentary and short-lived, but is far more permanent instead。题干与过去掌声比较，答案为 permanent。"
+        }
+      ],
+      "questionRange": {
+        "start": 23,
+        "end": 26
+      }
+    }
+  ]
   });
 })(typeof window !== "undefined" ? window : globalThis);

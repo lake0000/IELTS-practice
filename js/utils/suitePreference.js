@@ -91,7 +91,7 @@
         const normalizedScope = normalizeFrequencyScope(scope) || 'all';
         const normalizedFrequency = normalizeFrequency(value);
         if (!normalizedFrequency) {
-            return true;
+            return normalizedScope === 'all' || normalizedScope === 'custom';
         }
         if (normalizedScope === 'high') {
             return normalizedFrequency === 'high';

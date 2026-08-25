@@ -2384,7 +2384,14 @@
             Object.entries(map).forEach(function (pair) {
                 var key = String(pair[0]);
                 var entry = pair[1];
-                if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                if (!entry || typeof entry !== 'object' || seen.has(key)) {
+                    return;
+                }
+                if (entry.isCorrect === true || entry.correct === true) {
+                    seen.add(key);
+                    return;
+                }
+                if (entry.isCorrect !== false && entry.correct !== false) {
                     return;
                 }
                 seen.add(key);
@@ -2414,7 +2421,14 @@
                         var localKey = String(pair[0]);
                         var key = suitePrefix + '::' + localKey;
                         var entry = pair[1];
-                        if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                        if (!entry || typeof entry !== 'object' || seen.has(key)) {
+                            return;
+                        }
+                        if (entry.isCorrect === true || entry.correct === true) {
+                            seen.add(key);
+                            return;
+                        }
+                        if (entry.isCorrect !== false && entry.correct !== false) {
                             return;
                         }
                         seen.add(key);
@@ -2807,6 +2821,12 @@
         var actions = null;
         if (!bulkDeleteMode) {
             actions = createNode('div', { className: 'record-actions-container' }, [
+                createNode('button', {
+                    type: 'button',
+                    className: 'export-full-wrong-record-btn',
+                    title: '导出完整错题',
+                    dataset: { recordAction: 'export-full-wrong', recordId: recordId }
+                }, '导出'),
                 createNode('button', {
                     type: 'button',
                     className: 'delete-record-btn',

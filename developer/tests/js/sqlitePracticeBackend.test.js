@@ -107,6 +107,17 @@ function createFetchMock(initialRecords = []) {
             state.records = (body.records || []).map((record) => JSON.parse(JSON.stringify(record)));
             return jsonResponse(200, { ok: true, records: state.records, count: state.records.length });
         }
+        if (parsed.pathname === '/api/sqlite/practice-records/full-wrong-export' && method === 'POST') {
+            return jsonResponse(200, {
+                ok: true,
+                export: {
+                    schemaVersion: 'PracticeFullWrongExportV1',
+                    ids: Array.isArray(body.ids) ? body.ids : [],
+                    recordCount: Array.isArray(body.ids) ? body.ids.length : 0,
+                    records: []
+                }
+            });
+        }
         if (parsed.pathname.startsWith('/api/sqlite/practice-records/') && method === 'GET') {
             const id = decodeURIComponent(parsed.pathname.rsplit ? parsed.pathname.rsplit('/', 1)[0] : parsed.pathname.split('/').pop());
             const record = state.records.find((entry) => String(entry.id) === String(id));
@@ -161,6 +172,30 @@ function createContext(fetch, repositories) {
     return context.window.PracticeRecordAPI;
 }
 
+function createBackendContext(fetch) {
+    const windowStub = {
+        console,
+        fetch,
+        location: { protocol: 'http:', href: 'http://127.0.0.1:8081/' }
+    };
+    const sandbox = {
+        window: windowStub,
+        globalThis: windowStub,
+        console,
+        fetch,
+        location: windowStub.location,
+        setTimeout,
+        clearTimeout,
+        Date,
+        Math,
+        JSON,
+        URL
+    };
+    const context = vm.createContext(sandbox);
+    loadScript('js/core/sqlitePracticeBackend.js', context);
+    return context.window.SqlitePracticeBackend;
+}
+
 async function testBackendListWinsOverBrowserCache() {
     const local = createRepositoryHarness([{ id: 'local-stale', examId: 'p1-high-01', type: 'reading', score: 1, date: '2026-07-01T00:00:00.000Z' }]);
     const backendRecord = { id: 'backend-current', examId: 'p1-high-02', type: 'reading', title: 'Backend', score: 1, totalQuestions: 1, correctAnswers: 1, date: '2026-07-02T00:00:00.000Z' };
@@ -209,15 +244,51 @@ async function testSaveUsesBackendAndGetByIdDoesNotReadStaleLocalOnMiss() {
     assert.strictEqual(stale, null, 'SQLite 后端可用时，getById 缺失不能回旧浏览器缓存捞脏数据');
 }
 
+async function testFullWrongExportUsesBackendEndpoint() {
+    const local = createRepositoryHarness([{ id: 'local-stale', examId: 'p1-high-01', type: 'reading', score: 1, date: '2026-07-01T00:00:00.000Z' }]);
+    const fetchMock = createFetchMock([{ id: 'backend-current', examId: 'p1-high-02', type: 'reading', title: 'Backend', score: 1, totalQuestions: 1, correctAnswers: 1, date: '2026-07-02T00:00:00.000Z' }]);
+    const api = createContext(fetchMock.fetch, local.repositories);
+
+    const exported = await api.exportFullWrongRecords(['backend-current']);
+    assert.strictEqual(exported.schemaVersion, 'PracticeFullWrongExportV1');
+    assert.deepStrictEqual(exported.ids, ['backend-current']);
+    assert(fetchMock.state.calls.some((call) => call.path === '/api/sqlite/practice-records/full-wrong-export'), '完整错题导出应走 SQLite 后端接口');
+}
+
+async function testVocabStateUsesSqliteMeta() {
+    const fetchMock = createFetchMock([]);
+    const backend = createBackendContext(fetchMock.fetch);
+    const vocabState = {
+        schemaVersion: 'VocabStateV1',
+        activeListId: 'default',
+        config: { masteryCount: 4 },
+        reviewQueue: ['word-1'],
+        lists: {
+            default: {
+                id: 'default',
+                words: [{ id: 'word-1', word: 'exact', meaning: '精确的', correctCount: 2 }]
+            }
+        }
+    };
+
+    const saved = await backend.writeVocabState(vocabState);
+    assert.strictEqual(saved.activeListId, 'default');
+    const readBack = await backend.readVocabState(null);
+    assert.strictEqual(readBack.lists.default.words[0].word, 'exact');
+    assert(fetchMock.state.calls.some((call) => call.path === '/api/sqlite/meta/vocab_state' && call.method === 'PUT'), '词表快照应写入 SQLite meta/vocab_state');
+}
+
 async function main() {
     await testBackendListWinsOverBrowserCache();
     await testEmptyBackendSeedsFromBrowserRecordsOnce();
     await testSaveUsesBackendAndGetByIdDoesNotReadStaleLocalOnMiss();
+    await testFullWrongExportUsesBackendEndpoint();
+    await testVocabStateUsesSqliteMeta();
     console.log(JSON.stringify({
         status: 'pass',
         detail: 'SQLite PracticeRecordAPI bridge covered',
-        passed: 3,
-        total: 3
+        passed: 5,
+        total: 5
     }, null, 2));
 }
 

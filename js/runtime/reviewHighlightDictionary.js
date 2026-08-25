@@ -11,6 +11,7 @@
     let activeHighlight = null;
     let activeLookup = null;
     let outsideHandlerAttached = false;
+    let dictionaryAssetsPromise = null;
 
     function cleanText(value) {
         return String(value || '').replace(/\s+/g, ' ').trim();
@@ -174,7 +175,57 @@
         return currentOptions.lookupService || global.DictionaryService || null;
     }
 
-    function lookupTerm(term) {
+    function resolveAssetVersion() {
+        const pageVersion = new URLSearchParams(global.location?.search || '').get('v') || '';
+        if (pageVersion) {
+            return pageVersion;
+        }
+        const bundleScript = Array.from(document.scripts || [])
+            .find((script) => /reading-page\.bundle\.js/.test(script.getAttribute('src') || ''));
+        if (!bundleScript) {
+            return '';
+        }
+        try {
+            return new URL(bundleScript.getAttribute('src') || '', global.location?.href || 'http://localhost/').searchParams.get('v') || '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function loadScriptOnce(url) {
+        return new Promise((resolve, reject) => {
+            const existing = Array.from(document.scripts || [])
+                .find((script) => script.getAttribute('src') === url);
+            if (existing) {
+                resolve(true);
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = url;
+            script.defer = true;
+            script.onload = () => resolve(true);
+            script.onerror = () => reject(new Error(`dictionary_asset_load_failed:${url}`));
+            document.head.appendChild(script);
+        });
+    }
+
+    function ensureDictionaryAssets() {
+        const dictionaries = global.__LOCAL_DICTIONARIES__ || {};
+        if (dictionaries.ecdict && Array.isArray(dictionaries.ecdict.entries)) {
+            return Promise.resolve(true);
+        }
+        if (!dictionaryAssetsPromise) {
+            const version = resolveAssetVersion();
+            const url = `/assets/wordlists/ecdict_reading.bundle.js${version ? `?v=${encodeURIComponent(version)}` : ''}`;
+            dictionaryAssetsPromise = loadScriptOnce(url).catch((error) => {
+                dictionaryAssetsPromise = null;
+                throw error;
+            });
+        }
+        return dictionaryAssetsPromise;
+    }
+
+    function lookupTermSync(term) {
         const service = getLookupService();
         if (!service || typeof service.lookup !== 'function') {
             return {
@@ -198,6 +249,15 @@
                 reason: 'lookup_error'
             };
         }
+    }
+
+    async function lookupTerm(term) {
+        try {
+            await ensureDictionaryAssets();
+        } catch (error) {
+            console.warn('[ReviewHighlightDictionary] dictionary asset unavailable:', error);
+        }
+        return lookupTermSync(term);
     }
 
     function ensureBubble() {
@@ -259,12 +319,19 @@
             ? `${lookup.sourceLabel}${lookup.license ? ` · ${lookup.license}` : ''}`
             : '';
         const body = !found
-            ? `
+            ? (lookup && lookup.reason === 'loading'
+                ? `
+                <div class="vocab-section">
+                    <div class="vocab-label">本地词典</div>
+                    <div class="vocab-text">正在加载释义...</div>
+                </div>
+            `
+                : `
                 <div class="vocab-section">
                     <div class="vocab-label">本地词典</div>
                     <div class="vocab-text">未收录该高亮内容。可先加入阅读高亮生词，后续手动补充释义。</div>
                 </div>
-            `
+            `)
             : (Array.isArray(lookup.parts) && lookup.parts.length
                 ? lookup.parts.map(renderPart).join('')
                 : `
@@ -316,10 +383,25 @@
             return;
         }
         activeHighlight = highlight;
-        activeLookup = lookupTerm(term);
+        activeLookup = {
+            found: false,
+            requested: term,
+            term,
+            source: 'local',
+            reason: 'loading'
+        };
         const bubble = ensureBubble();
         bubble.innerHTML = renderLookup(activeLookup);
         positionBubble(bubble, highlight);
+        lookupTerm(term).then((lookup) => {
+            if (activeHighlight !== highlight) {
+                return;
+            }
+            activeLookup = lookup;
+            const currentBubble = ensureBubble();
+            currentBubble.innerHTML = renderLookup(activeLookup);
+            positionBubble(currentBubble, highlight);
+        });
         if (!outsideHandlerAttached) {
             outsideHandlerAttached = true;
             document.addEventListener('click', handleOutsideClick, true);

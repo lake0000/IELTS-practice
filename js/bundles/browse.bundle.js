@@ -2387,7 +2387,14 @@
             Object.entries(map).forEach(function (pair) {
                 var key = String(pair[0]);
                 var entry = pair[1];
-                if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                if (!entry || typeof entry !== 'object' || seen.has(key)) {
+                    return;
+                }
+                if (entry.isCorrect === true || entry.correct === true) {
+                    seen.add(key);
+                    return;
+                }
+                if (entry.isCorrect !== false && entry.correct !== false) {
                     return;
                 }
                 seen.add(key);
@@ -2417,7 +2424,14 @@
                         var localKey = String(pair[0]);
                         var key = suitePrefix + '::' + localKey;
                         var entry = pair[1];
-                        if (!entry || typeof entry !== 'object' || seen.has(key) || entry.isCorrect !== false) {
+                        if (!entry || typeof entry !== 'object' || seen.has(key)) {
+                            return;
+                        }
+                        if (entry.isCorrect === true || entry.correct === true) {
+                            seen.add(key);
+                            return;
+                        }
+                        if (entry.isCorrect !== false && entry.correct !== false) {
                             return;
                         }
                         seen.add(key);
@@ -2810,6 +2824,12 @@
         var actions = null;
         if (!bulkDeleteMode) {
             actions = createNode('div', { className: 'record-actions-container' }, [
+                createNode('button', {
+                    type: 'button',
+                    className: 'export-full-wrong-record-btn',
+                    title: '导出完整错题',
+                    dataset: { recordAction: 'export-full-wrong', recordId: recordId }
+                }, '导出'),
                 createNode('button', {
                     type: 'button',
                     className: 'delete-record-btn',
@@ -4376,6 +4396,56 @@
         return '';
     }
 
+    function normalizeCustomSuiteFrequencyScope(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (raw === 'high' || raw === 'only_high' || raw === '仅高频' || raw === '高频') {
+            return 'high';
+        }
+        if (
+            raw === 'high_medium'
+            || raw === 'high-medium'
+            || raw === 'highmedium'
+            || raw === 'high+medium'
+            || raw === '高频+次高频'
+            || raw === '高频次高频'
+        ) {
+            return 'high_medium';
+        }
+        if (raw === 'custom') {
+            return 'custom';
+        }
+        return 'all';
+    }
+
+    function isExamAllowedByCustomSuiteFrequency(exam, scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'all' || normalizedScope === 'custom') {
+            return true;
+        }
+        const bucket = normalizeFrequencyBucket(exam);
+        if (!bucket) {
+            return normalizedScope === 'all' || normalizedScope === 'custom';
+        }
+        if (normalizedScope === 'high') {
+            return bucket === 'high';
+        }
+        if (normalizedScope === 'high_medium') {
+            return bucket === 'high' || bucket === 'medium';
+        }
+        return true;
+    }
+
+    function formatCustomSuiteFrequencyScopeLabel(scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'high') {
+            return '仅高频';
+        }
+        if (normalizedScope === 'high_medium') {
+            return '高频+次高频';
+        }
+        return '全部频率';
+    }
+
     function applyBrowseFrequencyFilter(exams, frequencyFilter) {
         const list = Array.isArray(exams) ? exams.slice() : [];
         const filter = normalizeBrowseFrequencyFilter(
@@ -4988,6 +5058,13 @@
         if (currentCategory && examCategory && currentCategory !== examCategory) {
             return false;
         }
+        if (!isExamAllowedByCustomSuiteFrequency(exam, draft.frequencyScope)) {
+            const scopeLabel = formatCustomSuiteFrequencyScopeLabel(draft.frequencyScope);
+            if (typeof global.showMessage === 'function') {
+                global.showMessage('当前套题范围是' + scopeLabel + '，不能选择 ' + formatFrequencyLabel(exam.frequency || '低频') + ' 文章。', 'warning');
+            }
+            return false;
+        }
 
         const service = global.appStateService;
         let updatedDraft = null;
@@ -5169,13 +5246,18 @@
             sortMode: global.__browseSortMode,
             preferredFirstExamByCategory
         });
+        const customSuiteDraft = getCustomSuiteDraft();
+        if (customSuiteDraft && customSuiteDraft.status !== 'ready') {
+            examsToShow = examsToShow.filter((exam) => (
+                isExamAllowedByCustomSuiteFrequency(exam, customSuiteDraft.frequencyScope)
+            ));
+        }
         if (memorizeSelectionActive) {
             examsToShow = filterReadingMemorizeExams(examsToShow);
             if (typeof global.setBrowseTitle === 'function') {
                 global.setBrowseTitle('阅读背题选题');
             }
         }
-        const customSuiteDraft = getCustomSuiteDraft();
         const selectionMode = memorizeSelectionActive
             ? 'reading-memorize'
             : (isCustomSuiteSelectionActive() ? 'custom-suite' : '');
@@ -7338,7 +7420,7 @@
             if (resolvedDataKey) {
                 params.set('dataKey', String(resolvedDataKey));
             }
-            params.set('v', String(window.APP_ASSET_VERSION || '20260730-replay-detail-wrongreason'));
+            params.set('v', String(window.APP_ASSET_VERSION || '20260825-latest-suite-review-fix'));
             const practiceMode = options && typeof options.practiceMode === 'string'
                 ? options.practiceMode.trim().toLowerCase()
                 : '';
@@ -13991,6 +14073,21 @@ window.BrowseStateManager = BrowseStateManager;
             .replace(/[^a-z0-9]+/g, '');
     }
 
+    function extractLeadingOptionLabel(value) {
+        const cleaned = String(value == null ? '' : value)
+            .replace(/[“”]/g, '"')
+            .replace(/[‘’]/g, "'")
+            .replace(/[‐‑‒–—]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[\s"'`()[\]{}<>.,;:!?]+|[\s"'`()[\]{}<>.,;:!?]+$/g, '');
+        if (/^[A-Z](?:\s+[A-Z])+$/.test(cleaned)) {
+            return '';
+        }
+        const match = cleaned.match(/^([A-Z])(?:[.)]|\s+)\S+/);
+        return match ? match[1] : '';
+    }
+
     function splitAnswerTokens(value) {
         if (Array.isArray(value)) {
             return value
@@ -14038,6 +14135,12 @@ window.BrowseStateManager = BrowseStateManager;
         if (normalizedLeft === normalizedRight) {
             return true;
         }
+        if (/^[A-Z]$/.test(normalizedLeft) && extractLeadingOptionLabel(normalizedRight) === normalizedLeft) {
+            return true;
+        }
+        if (/^[A-Z]$/.test(normalizedRight) && extractLeadingOptionLabel(normalizedLeft) === normalizedRight) {
+            return true;
+        }
         if (/^[A-Z]$/.test(normalizedLeft) || /^[A-Z]$/.test(normalizedRight)) {
             return false;
         }
@@ -14062,6 +14165,13 @@ window.BrowseStateManager = BrowseStateManager;
         }
         if (expected.length === 0 || actual.length === 0) {
             return false;
+        }
+
+        if (expected.length === 1 && /^[A-Z]$/.test(expected[0])) {
+            const actualLeadingOption = extractLeadingOptionLabel(userAnswer);
+            if (actualLeadingOption) {
+                return actualLeadingOption === expected[0];
+            }
         }
 
         if (Array.isArray(correctAnswer)) {
@@ -14121,6 +14231,7 @@ window.BrowseStateManager = BrowseStateManager;
 
     const api = {
         normalizeToken,
+        extractLeadingOptionLabel,
         splitAnswerTokens,
         areTokensEquivalent,
         compareTokenSets,
@@ -16396,17 +16507,67 @@ async function syncPracticeRecords(options = {}) {
 
             // Coerce percentage/accuracy if only scoreInfo exists
             const sInfo = r && (r.scoreInfo || rd.scoreInfo) || {};
-            const correct = (typeof r.correctAnswers === 'number') ? r.correctAnswers : (typeof sInfo.correct === 'number' ? sInfo.correct : (typeof r.score === 'number' ? r.score : undefined));
-            const total = (typeof r.totalQuestions === 'number') ? r.totalQuestions : (typeof sInfo.total === 'number' ? sInfo.total : (rd.answers ? Object.keys(rd.answers).length : undefined));
-            let accuracy = (typeof r.accuracy === 'number') ? r.accuracy : undefined;
-            let percentage = (typeof r.percentage === 'number') ? r.percentage : undefined;
-            if ((accuracy === undefined || percentage === undefined) && Number.isFinite(correct) && Number.isFinite(total) && total > 0) {
+            const rdScoreInfo = rd && rd.scoreInfo && typeof rd.scoreInfo === 'object' ? rd.scoreInfo : {};
+            const correct = pickNumericValue([
+                sInfo.correct,
+                sInfo.score,
+                r.score,
+                rdScoreInfo.correct,
+                rdScoreInfo.score,
+                rd.score,
+                r.correctAnswers
+            ]);
+            const total = pickNumericValue([
+                sInfo.total,
+                r.totalQuestions,
+                rdScoreInfo.total,
+                rd.totalQuestions,
+                r.questionCount,
+                rd.answers ? Object.keys(rd.answers).length : undefined
+            ]);
+            let accuracy = pickNumericValue([
+                sInfo.accuracy,
+                r.accuracy,
+                rdScoreInfo.accuracy,
+                rd.accuracy
+            ]);
+            let percentage = pickNumericValue([
+                sInfo.percentage,
+                r.percentage,
+                rdScoreInfo.percentage,
+                rd.percentage
+            ]);
+            if ((!Number.isFinite(accuracy) || !Number.isFinite(percentage)) && Number.isFinite(correct) && Number.isFinite(total) && total > 0) {
                 const acc = correct / total;
-                if (accuracy === undefined) accuracy = acc;
-                if (percentage === undefined) percentage = Math.round(acc * 100);
+                if (!Number.isFinite(accuracy)) accuracy = acc;
+                if (!Number.isFinite(percentage)) percentage = Math.round(acc * 100);
             }
 
-            return { ...r, duration, durationUnknown, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
+            const next = { ...r, duration, durationUnknown, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
+            if (Number.isFinite(correct)) {
+                next.correctAnswers = correct;
+                next.score = correct;
+            }
+            if (Number.isFinite(total)) {
+                next.totalQuestions = total;
+            }
+            if (next.scoreInfo && typeof next.scoreInfo === 'object') {
+                next.scoreInfo = { ...next.scoreInfo };
+                if (Number.isFinite(correct)) {
+                    next.scoreInfo.correct = correct;
+                    next.scoreInfo.score = correct;
+                }
+                if (Number.isFinite(total)) {
+                    next.scoreInfo.total = total;
+                }
+                if (Number.isFinite(accuracy)) {
+                    next.scoreInfo.accuracy = accuracy;
+                }
+                if (Number.isFinite(percentage)) {
+                    next.scoreInfo.percentage = Math.round(percentage);
+                }
+            }
+            return next;
         });
         records = enrichPracticeRecordsWithExamIndex(records, typeof getExamIndexState === 'function' ? getExamIndexState() : window.examIndex);
     } catch (e) { console.warn('[System] normalize durations failed:', e); }
@@ -17116,17 +17277,54 @@ function resolveCompletionCategory(exam = {}, realData = {}) {
     return 'Unknown';
 }
 
+function addPracticeWrongReasonCategory(categories, value) {
+    String(value || '')
+        .split(/[、,，;；|/]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+            if (!categories.includes(item)) {
+                categories.push(item);
+            }
+        });
+}
+
+function normalizePracticeWrongReasonCategories(value) {
+    const source = value && typeof value === 'object'
+        ? value
+        : { category: value };
+    const categories = [];
+    if (Array.isArray(source.categories)) {
+        source.categories.forEach((item) => addPracticeWrongReasonCategory(categories, item));
+    }
+    addPracticeWrongReasonCategory(categories, source.category);
+    addPracticeWrongReasonCategory(categories, source.reason);
+    addPracticeWrongReasonCategory(categories, source.type);
+    return categories;
+}
+
+function practiceWrongReasonCategoriesEqual(left, right) {
+    const leftCategories = normalizePracticeWrongReasonCategories(left);
+    const rightCategories = normalizePracticeWrongReasonCategories(right);
+    if (leftCategories.length !== rightCategories.length) {
+        return false;
+    }
+    return leftCategories.every((category) => rightCategories.includes(category));
+}
+
 function normalizePracticeWrongReason(value) {
     const source = value && typeof value === 'object'
         ? value
         : { category: value };
-    const category = String(source.category || source.reason || source.type || '').trim();
+    const categories = normalizePracticeWrongReasonCategories(source);
+    const category = categories[0] || '';
     const note = String(source.note || source.detail || source.text || '').trim();
     if (!category && !note) {
         return null;
     }
     return {
         category,
+        categories,
         note,
         updatedAt: source.updatedAt || new Date().toISOString()
     };
@@ -17618,7 +17816,7 @@ function recordHasPracticeWrongReasons(record, wrongReasons, payload = {}) {
         const persistedReason = normalizePracticeWrongReason(persisted[questionId]);
         return Boolean(
             persistedReason
-            && persistedReason.category === expectedReason.category
+            && practiceWrongReasonCategoriesEqual(persistedReason, expectedReason)
             && persistedReason.note === expectedReason.note
         );
     });
@@ -18352,6 +18550,27 @@ function setupPracticeHistoryInteractions() {
         }
     };
 
+    const handleFullWrongExport = async (recordId, event) => {
+        if (!recordId) return;
+        if (event) {
+            event.preventDefault();
+            if (typeof event.stopPropagation === 'function') {
+                event.stopPropagation();
+            }
+        }
+        try {
+            if (!window.practiceHistoryEnhancer || typeof window.practiceHistoryEnhancer.exportFullWrongJson !== 'function') {
+                throw new Error('完整错题导出组件未加载');
+            }
+            await window.practiceHistoryEnhancer.exportFullWrongJson([recordId]);
+        } catch (error) {
+            console.error('[PracticeHistory] 完整错题导出失败:', error);
+            if (window.showMessage) {
+                window.showMessage('完整错题导出失败: ' + (error && error.message ? error.message : error), 'error');
+            }
+        }
+    };
+
     const handleSelection = (recordId, event) => {
         if (!getBulkDeleteModeState() || !recordId) return;
         if (event) event.preventDefault();
@@ -18380,6 +18599,10 @@ function setupPracticeHistoryInteractions() {
             handleDelete(this.dataset.recordId, event);
         });
 
+        window.DOM.delegate('click', '.practice-history-list [data-record-action="export-full-wrong"], #history-list [data-record-action="export-full-wrong"]', function (event) {
+            handleFullWrongExport(this.dataset.recordId, event);
+        });
+
         window.DOM.delegate('click', '.practice-history-list .history-item, #history-list .history-item', function (event) {
             const actionTarget = event.target.closest('[data-record-action]');
             if (actionTarget) return;
@@ -18403,6 +18626,12 @@ function setupPracticeHistoryInteractions() {
             const deleteTarget = event.target.closest('[data-record-action="delete"]');
             if (deleteTarget && container.contains(deleteTarget)) {
                 handleDelete(deleteTarget.dataset.recordId, event);
+                return;
+            }
+
+            const exportTarget = event.target.closest('[data-record-action="export-full-wrong"]');
+            if (exportTarget && container.contains(exportTarget)) {
+                handleFullWrongExport(exportTarget.dataset.recordId, event);
                 return;
             }
 
@@ -18480,7 +18709,10 @@ function formatWrongReasonText(reason) {
         return reason.trim();
     }
     if (typeof reason === 'object') {
-        const category = typeof reason.category === 'string' ? reason.category.trim() : '';
+        const categories = normalizePracticeWrongReasonCategories(reason);
+        const category = categories.length > 0
+            ? categories.join('、')
+            : (typeof reason.category === 'string' ? reason.category.trim() : '');
         const note = typeof reason.note === 'string' ? reason.note.trim() : '';
         return [category, note].filter(Boolean).join('：');
     }
@@ -18536,7 +18768,14 @@ function getPracticeWrongReasonSummary(records) {
                     return;
                 }
                 const questionKey = String(key);
-                if (seen.has(questionKey) || entry.isCorrect !== false) {
+                if (seen.has(questionKey)) {
+                    return;
+                }
+                if (entry.isCorrect === true || entry.correct === true) {
+                    seen.add(questionKey);
+                    return;
+                }
+                if (entry.isCorrect !== false && entry.correct !== false) {
                     return;
                 }
                 seen.add(questionKey);

@@ -523,13 +523,27 @@
         const source = value && typeof value === 'object'
             ? value
             : { category: value };
-        const category = normalizeAnswerValue(source.category ?? source.reason ?? source.type);
+        const categories = [];
+        const addCategory = (item) => {
+            const category = normalizeAnswerValue(item);
+            if (category && !categories.includes(category)) {
+                categories.push(category);
+            }
+        };
+        if (Array.isArray(source.categories)) {
+            source.categories.forEach(addCategory);
+        }
+        addCategory(source.category);
+        addCategory(source.reason);
+        addCategory(source.type);
+        const category = categories[0] || '';
         const note = normalizeAnswerValue(source.note ?? source.detail ?? source.text);
         if (!category && !note) {
             return null;
         }
         return {
             category,
+            categories,
             note,
             updatedAt: source.updatedAt || new Date().toISOString()
         };
@@ -1079,7 +1093,12 @@
         const derivedTotalQuestions = deriveTotalQuestionCount(recordData, normalizedAnswers.length);
         const derivedCorrectAnswers = deriveCorrectAnswerCount(recordData, normalizedAnswers);
         const totalQuestions = ensureNumber(recordData.totalQuestions, derivedTotalQuestions);
-        const correctAnswers = ensureNumber(recordData.correctAnswers, derivedCorrectAnswers);
+        const correctAnswers = ensureNumber(
+            (recordData.scoreInfo && (recordData.scoreInfo.correct ?? recordData.scoreInfo.score))
+            ?? recordData.score
+            ?? recordData.correctAnswers,
+            derivedCorrectAnswers
+        );
         let accuracy = ensureNumber(
             recordData.accuracy
             ?? (recordData.realData && recordData.realData.accuracy)
@@ -1181,6 +1200,33 @@
             ? options.generateRecordId
             : defaultGenerateRecordId;
 
+        const percentage = Math.round(accuracy * 100);
+        const baseScoreInfo = Object.assign({}, recordData.scoreInfo || {});
+        const normalizedScoreInfo = Object.assign({}, baseScoreInfo, {
+            correct: correctAnswers,
+            score: correctAnswers,
+            total: totalQuestions,
+            totalQuestions,
+            accuracy,
+            percentage,
+            duration: resolveDurationSeconds(recordData, startTime, endTime),
+            timeSpent: baseScoreInfo.timeSpent ?? baseScoreInfo.duration ?? resolveDurationSeconds(recordData, startTime, endTime),
+            details: baseScoreInfo.details || detailSource || null
+        });
+
+        const baseRealScoreInfo = Object.assign({}, (recordData.realData && recordData.realData.scoreInfo) || {});
+        const normalizedRealScoreInfo = Object.assign({}, baseRealScoreInfo, {
+            correct: correctAnswers,
+            score: correctAnswers,
+            total: totalQuestions,
+            totalQuestions,
+            accuracy,
+            percentage,
+            duration: baseRealScoreInfo.duration ?? normalizedScoreInfo.duration,
+            timeSpent: baseRealScoreInfo.timeSpent ?? normalizedScoreInfo.timeSpent,
+            details: baseRealScoreInfo.details || detailSource || null
+        });
+
         return {
             id: recordId || generateRecordId(),
             examId: resolvedExamId,
@@ -1198,6 +1244,7 @@
             totalQuestions,
             correctAnswers,
             accuracy,
+            percentage,
             answers: normalizedAnswers,
             answerDetails: detailSource || null,
             correctAnswerMap: normalizedCorrectMap || {},
@@ -1208,11 +1255,7 @@
             suiteMode: Boolean(recordData.suiteMode || ((recordData.frequency || metadata.frequency || '').toLowerCase() === 'suite')),
             suiteSessionId: recordData.suiteSessionId || (metadata && metadata.suiteSessionId) || null,
             suiteEntries: normalizedSuiteEntries,
-            scoreInfo: recordData.scoreInfo
-                ? Object.assign({}, recordData.scoreInfo, {
-                    details: recordData.scoreInfo.details || detailSource || null
-                })
-                : (detailSource ? { details: detailSource } : null),
+            scoreInfo: normalizedScoreInfo,
             realData: recordData.realData
                 ? Object.assign({}, recordData.realData, {
                     examId: recordData.realData.examId || resolvedExamId,
@@ -1222,9 +1265,7 @@
                     correctAnswers: realDataCorrectAnswers,
                     correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
                     wrongReasons: clonePlainObject(normalizedWrongReasons),
-                    scoreInfo: Object.assign({}, (recordData.realData && recordData.realData.scoreInfo) || {}, {
-                        details: (recordData.realData && recordData.realData.scoreInfo && recordData.realData.scoreInfo.details) || detailSource || null
-                    }),
+                    scoreInfo: normalizedRealScoreInfo,
                     answerComparison: normalizedComparison || ((recordData.realData && recordData.realData.answerComparison)
                         ? clonePlainObject(recordData.realData.answerComparison)
                         : null)
@@ -1237,7 +1278,7 @@
                     correctAnswers: realDataCorrectAnswers,
                     correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
                     wrongReasons: clonePlainObject(normalizedWrongReasons),
-                    scoreInfo: detailSource ? { details: detailSource } : null,
+                    scoreInfo: normalizedRealScoreInfo,
                     answerComparison: normalizedComparison || null
                 },
             answerComparison: normalizedComparison,
@@ -1415,7 +1456,7 @@
             Object.keys(correctAnswerMap).length || Object.keys(answerMap).length
         );
         const correctAnswers = ensureNumber(
-            rawPayload.correctAnswers ?? rawPayload.correctAnswersCount ?? scoreInfo.correct ?? scoreInfo.score ?? rawPayload.score,
+            scoreInfo.correct ?? scoreInfo.score ?? rawPayload.score ?? rawPayload.correctAnswersCount ?? rawPayload.correctAnswers,
             deriveCorrectAnswerCount({ answerDetails, scoreInfo }, answerList)
         );
         let accuracy = typeof rawPayload.accuracy === 'number'
@@ -1660,6 +1701,15 @@
         }
         const scoreInfo = record.scoreInfo || {};
         const metadata = record.metadata || {};
+        const resolveNumber = (...values) => {
+            for (let index = 0; index < values.length; index += 1) {
+                const numeric = Number(values[index]);
+                if (Number.isFinite(numeric)) {
+                    return numeric;
+                }
+            }
+            return null;
+        };
         const projectComparisonSummary = (source) => {
             if (!source || typeof source !== 'object') {
                 return null;
@@ -1723,11 +1773,25 @@
             endTime: record.endTime || null,
             date: record.date || null,
             duration: Number(record.duration ?? scoreInfo.duration ?? scoreInfo.timeSpent) || 0,
-            percentage: Number(record.percentage ?? scoreInfo.percentage) || 0,
-            accuracy: Number(record.accuracy ?? scoreInfo.accuracy) || 0,
-            score: Number(record.score ?? scoreInfo.score) || 0,
-            totalQuestions: Number(record.totalQuestions ?? scoreInfo.total) || 0,
-            correctAnswers: Number(record.correctAnswers ?? scoreInfo.correct) || 0,
+            percentage: (() => {
+                const score = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers);
+                const total = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions);
+                const accuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+                const percentage = resolveNumber(record.percentage, scoreInfo.percentage);
+                if (percentage && percentage > 0) return percentage;
+                if (accuracy && accuracy > 0) return Math.round((accuracy > 1 ? accuracy / 100 : accuracy) * 100);
+                return total && total > 0 && score && score > 0 ? Math.round((score / total) * 100) : (percentage || 0);
+            })(),
+            accuracy: (() => {
+                const score = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers);
+                const total = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions);
+                const accuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+                if (accuracy != null && accuracy > 0) return accuracy > 1 ? accuracy / 100 : accuracy;
+                return total && total > 0 && score && score > 0 ? score / total : (accuracy || 0);
+            })(),
+            score: Number(record.score ?? scoreInfo.score ?? scoreInfo.correct) || 0,
+            totalQuestions: Number(record.totalQuestions ?? scoreInfo.total ?? scoreInfo.totalQuestions) || 0,
+            correctAnswers: Number(scoreInfo.correct ?? scoreInfo.score ?? record.score ?? record.correctAnswers) || 0,
             status: record.status || 'completed',
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
@@ -1739,13 +1803,13 @@
             questionTypePerformance: record.questionTypePerformance || null,
             // 轻量 scoreInfo 子集：供 accuracy/duration 等 fallback 读取
             scoreInfo: {
-                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : null,
+                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : (record.accuracy != null ? record.accuracy : null),
                 duration: scoreInfo.duration != null ? scoreInfo.duration : null,
                 timeSpent: scoreInfo.timeSpent != null ? scoreInfo.timeSpent : null,
-                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : null,
-                score: scoreInfo.score != null ? scoreInfo.score : null,
-                total: scoreInfo.total != null ? scoreInfo.total : null,
-                correct: scoreInfo.correct != null ? scoreInfo.correct : null
+                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : (record.percentage != null ? record.percentage : null),
+                score: scoreInfo.score != null ? scoreInfo.score : (record.score != null ? record.score : null),
+                total: scoreInfo.total != null ? scoreInfo.total : (record.totalQuestions != null ? record.totalQuestions : null),
+                correct: scoreInfo.correct != null ? scoreInfo.correct : (record.correctAnswers != null ? record.correctAnswers : null)
             },
             metadata: {
                 category: metadata.category || record.category || null,

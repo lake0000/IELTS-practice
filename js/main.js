@@ -501,17 +501,67 @@ async function syncPracticeRecords(options = {}) {
 
             // Coerce percentage/accuracy if only scoreInfo exists
             const sInfo = r && (r.scoreInfo || rd.scoreInfo) || {};
-            const correct = (typeof r.correctAnswers === 'number') ? r.correctAnswers : (typeof sInfo.correct === 'number' ? sInfo.correct : (typeof r.score === 'number' ? r.score : undefined));
-            const total = (typeof r.totalQuestions === 'number') ? r.totalQuestions : (typeof sInfo.total === 'number' ? sInfo.total : (rd.answers ? Object.keys(rd.answers).length : undefined));
-            let accuracy = (typeof r.accuracy === 'number') ? r.accuracy : undefined;
-            let percentage = (typeof r.percentage === 'number') ? r.percentage : undefined;
-            if ((accuracy === undefined || percentage === undefined) && Number.isFinite(correct) && Number.isFinite(total) && total > 0) {
+            const rdScoreInfo = rd && rd.scoreInfo && typeof rd.scoreInfo === 'object' ? rd.scoreInfo : {};
+            const correct = pickNumericValue([
+                sInfo.correct,
+                sInfo.score,
+                r.score,
+                rdScoreInfo.correct,
+                rdScoreInfo.score,
+                rd.score,
+                r.correctAnswers
+            ]);
+            const total = pickNumericValue([
+                sInfo.total,
+                r.totalQuestions,
+                rdScoreInfo.total,
+                rd.totalQuestions,
+                r.questionCount,
+                rd.answers ? Object.keys(rd.answers).length : undefined
+            ]);
+            let accuracy = pickNumericValue([
+                sInfo.accuracy,
+                r.accuracy,
+                rdScoreInfo.accuracy,
+                rd.accuracy
+            ]);
+            let percentage = pickNumericValue([
+                sInfo.percentage,
+                r.percentage,
+                rdScoreInfo.percentage,
+                rd.percentage
+            ]);
+            if ((!Number.isFinite(accuracy) || !Number.isFinite(percentage)) && Number.isFinite(correct) && Number.isFinite(total) && total > 0) {
                 const acc = correct / total;
-                if (accuracy === undefined) accuracy = acc;
-                if (percentage === undefined) percentage = Math.round(acc * 100);
+                if (!Number.isFinite(accuracy)) accuracy = acc;
+                if (!Number.isFinite(percentage)) percentage = Math.round(acc * 100);
             }
 
-            return { ...r, duration, durationUnknown, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
+            const next = { ...r, duration, durationUnknown, accuracy: (accuracy ?? r.accuracy), percentage: (percentage ?? r.percentage) };
+            if (Number.isFinite(correct)) {
+                next.correctAnswers = correct;
+                next.score = correct;
+            }
+            if (Number.isFinite(total)) {
+                next.totalQuestions = total;
+            }
+            if (next.scoreInfo && typeof next.scoreInfo === 'object') {
+                next.scoreInfo = { ...next.scoreInfo };
+                if (Number.isFinite(correct)) {
+                    next.scoreInfo.correct = correct;
+                    next.scoreInfo.score = correct;
+                }
+                if (Number.isFinite(total)) {
+                    next.scoreInfo.total = total;
+                }
+                if (Number.isFinite(accuracy)) {
+                    next.scoreInfo.accuracy = accuracy;
+                }
+                if (Number.isFinite(percentage)) {
+                    next.scoreInfo.percentage = Math.round(percentage);
+                }
+            }
+            return next;
         });
         records = enrichPracticeRecordsWithExamIndex(records, typeof getExamIndexState === 'function' ? getExamIndexState() : window.examIndex);
     } catch (e) { console.warn('[System] normalize durations failed:', e); }
@@ -1221,17 +1271,54 @@ function resolveCompletionCategory(exam = {}, realData = {}) {
     return 'Unknown';
 }
 
+function addPracticeWrongReasonCategory(categories, value) {
+    String(value || '')
+        .split(/[、,，;；|/]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+            if (!categories.includes(item)) {
+                categories.push(item);
+            }
+        });
+}
+
+function normalizePracticeWrongReasonCategories(value) {
+    const source = value && typeof value === 'object'
+        ? value
+        : { category: value };
+    const categories = [];
+    if (Array.isArray(source.categories)) {
+        source.categories.forEach((item) => addPracticeWrongReasonCategory(categories, item));
+    }
+    addPracticeWrongReasonCategory(categories, source.category);
+    addPracticeWrongReasonCategory(categories, source.reason);
+    addPracticeWrongReasonCategory(categories, source.type);
+    return categories;
+}
+
+function practiceWrongReasonCategoriesEqual(left, right) {
+    const leftCategories = normalizePracticeWrongReasonCategories(left);
+    const rightCategories = normalizePracticeWrongReasonCategories(right);
+    if (leftCategories.length !== rightCategories.length) {
+        return false;
+    }
+    return leftCategories.every((category) => rightCategories.includes(category));
+}
+
 function normalizePracticeWrongReason(value) {
     const source = value && typeof value === 'object'
         ? value
         : { category: value };
-    const category = String(source.category || source.reason || source.type || '').trim();
+    const categories = normalizePracticeWrongReasonCategories(source);
+    const category = categories[0] || '';
     const note = String(source.note || source.detail || source.text || '').trim();
     if (!category && !note) {
         return null;
     }
     return {
         category,
+        categories,
         note,
         updatedAt: source.updatedAt || new Date().toISOString()
     };
@@ -1723,7 +1810,7 @@ function recordHasPracticeWrongReasons(record, wrongReasons, payload = {}) {
         const persistedReason = normalizePracticeWrongReason(persisted[questionId]);
         return Boolean(
             persistedReason
-            && persistedReason.category === expectedReason.category
+            && practiceWrongReasonCategoriesEqual(persistedReason, expectedReason)
             && persistedReason.note === expectedReason.note
         );
     });
@@ -2457,6 +2544,27 @@ function setupPracticeHistoryInteractions() {
         }
     };
 
+    const handleFullWrongExport = async (recordId, event) => {
+        if (!recordId) return;
+        if (event) {
+            event.preventDefault();
+            if (typeof event.stopPropagation === 'function') {
+                event.stopPropagation();
+            }
+        }
+        try {
+            if (!window.practiceHistoryEnhancer || typeof window.practiceHistoryEnhancer.exportFullWrongJson !== 'function') {
+                throw new Error('完整错题导出组件未加载');
+            }
+            await window.practiceHistoryEnhancer.exportFullWrongJson([recordId]);
+        } catch (error) {
+            console.error('[PracticeHistory] 完整错题导出失败:', error);
+            if (window.showMessage) {
+                window.showMessage('完整错题导出失败: ' + (error && error.message ? error.message : error), 'error');
+            }
+        }
+    };
+
     const handleSelection = (recordId, event) => {
         if (!getBulkDeleteModeState() || !recordId) return;
         if (event) event.preventDefault();
@@ -2485,6 +2593,10 @@ function setupPracticeHistoryInteractions() {
             handleDelete(this.dataset.recordId, event);
         });
 
+        window.DOM.delegate('click', '.practice-history-list [data-record-action="export-full-wrong"], #history-list [data-record-action="export-full-wrong"]', function (event) {
+            handleFullWrongExport(this.dataset.recordId, event);
+        });
+
         window.DOM.delegate('click', '.practice-history-list .history-item, #history-list .history-item', function (event) {
             const actionTarget = event.target.closest('[data-record-action]');
             if (actionTarget) return;
@@ -2508,6 +2620,12 @@ function setupPracticeHistoryInteractions() {
             const deleteTarget = event.target.closest('[data-record-action="delete"]');
             if (deleteTarget && container.contains(deleteTarget)) {
                 handleDelete(deleteTarget.dataset.recordId, event);
+                return;
+            }
+
+            const exportTarget = event.target.closest('[data-record-action="export-full-wrong"]');
+            if (exportTarget && container.contains(exportTarget)) {
+                handleFullWrongExport(exportTarget.dataset.recordId, event);
                 return;
             }
 
@@ -2585,7 +2703,10 @@ function formatWrongReasonText(reason) {
         return reason.trim();
     }
     if (typeof reason === 'object') {
-        const category = typeof reason.category === 'string' ? reason.category.trim() : '';
+        const categories = normalizePracticeWrongReasonCategories(reason);
+        const category = categories.length > 0
+            ? categories.join('、')
+            : (typeof reason.category === 'string' ? reason.category.trim() : '');
         const note = typeof reason.note === 'string' ? reason.note.trim() : '';
         return [category, note].filter(Boolean).join('：');
     }
@@ -2641,7 +2762,14 @@ function getPracticeWrongReasonSummary(records) {
                     return;
                 }
                 const questionKey = String(key);
-                if (seen.has(questionKey) || entry.isCorrect !== false) {
+                if (seen.has(questionKey)) {
+                    return;
+                }
+                if (entry.isCorrect === true || entry.correct === true) {
+                    seen.add(questionKey);
+                    return;
+                }
+                if (entry.isCorrect !== false && entry.correct !== false) {
                     return;
                 }
                 seen.add(questionKey);

@@ -690,6 +690,11 @@
             color: #fff;
         }
 
+        .hl[data-hl-level="secondary"] {
+            background-color: #e63b86;
+            color: #fff;
+        }
+
         /* Dark Mode variables */
         body.dark-mode {
             --panel: #1e293b;
@@ -716,6 +721,11 @@
 
         body.dark-mode .hl[data-hl-type="note"] {
             background-color: #0369d9;
+            color: #fff;
+        }
+
+        body.dark-mode .hl[data-hl-level="secondary"] {
+            background-color: #e63b86;
             color: #fff;
         }
 
@@ -911,6 +921,7 @@
         .options-list label,
         .multiple-choice-options label,
         .matching-options label,
+        .options label,
         .mcq-group label,
         .radio-options label,
         .radio-group label,
@@ -930,6 +941,7 @@
         .choice-item label input[type="radio"],
         .multiple-choice-options label input[type="radio"],
         .matching-options label input[type="radio"],
+        .options label input[type="radio"],
         .mcq-group label input[type="radio"],
         .radio-options label input[type="radio"],
         .radio-group label input[type="radio"],
@@ -1940,9 +1952,9 @@
         </div>
     </div>
 
-    <script src="../../../js/bundles/core-foundation.bundle.js?v=20260730-replay-detail-wrongreason"></script>
-    <script src="./manifest.js"></script>
-    <script src="../../../js/bundles/reading-page.bundle.js?v=20260730-replay-detail-wrongreason"></script>
+    <script src="../../../js/bundles/core-foundation.bundle.js?v=20260825-latest-suite-review-fix"></script>
+    <script src="./manifest.js?v=20260825-latest-suite-review-fix"></script>
+    <script src="../../../js/bundles/reading-page.bundle.js?v=20260825-latest-suite-review-fix"></script>
 </body>
 
 </html>

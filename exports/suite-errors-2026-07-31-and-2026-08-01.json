@@ -1,0 +1,2404 @@
+{
+  "generatedAt": "2026-08-01T21:24:15.505792+08:00",
+  "sourceDatabase": "E:\\hnu\\雅思\\备份zyz\\ielts-atlas.sqlite",
+  "suites": [
+    {
+      "suiteId": "suite_ms8py147_7b674d",
+      "title": "07月31日套题练习1",
+      "recordDateUtc": "2026-07-31T10:07:02.692Z",
+      "score": 25,
+      "totalQuestions": 40,
+      "accuracy": 0.625,
+      "passages": [
+        {
+          "examId": "p1-high-229",
+          "title": "New Understanding of Giraffes in the Wild 野生长颈鹿",
+          "category": "P1",
+          "scoreInfo": {
+            "correct": 9,
+            "total": 13,
+            "accuracy": 0.6923076923076923,
+            "percentage": 69,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "New Understanding of Giraffes in the Wild",
+            "subtitle": "",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "Even as the tallest animals on Earth, giraffes can be easy to overlook. Despite being a favorite in zoos, until recently almost nobody studied giraffes in the wild. ‘When I first became interested in giraffes in 2008 and started looking through the scientific literature, I was really surprised to see how little had been done,’ said Megan Strauss, an animal researcher at the University of Minnesota, USA. All that is changing fast, as a growing number of researchers seek to understand the biology and complex behavior of this graceful giant in its native habitat."
+              },
+              {
+                "label": "",
+                "text": "Giraffes, found throughout sub-Saharan Africa, are currently classified as a single species with up to nine varieties that differ by features like head shape and whether the fur on their legs is plain or patterned. The giraffe is listed as endangered, but researchers point to evidence that in the past 15 years, the population has fallen some 40 percent."
+              },
+              {
+                "label": "",
+                "text": "Recent studies have allowed researchers new insights into giraffes’ social structure. Groups of female giraffes, for example, have been found to form close friendships that can last for years. ‘We’re just at the beginnings of trying to understand this kind of behavior,’ Dr Strauss said. Female giraffes can live 20 years or more, and it makes sense they might rely on each other for clues to the best feeding grounds, help with taking care of their young, or the reduction of stress, by staying in groups."
+              },
+              {
+                "label": "",
+                "text": "Mother giraffes have displayed signs of grief after losing their young, known as calves, to lions. Dr Strauss described one case in which a mother spent four days at the place where a lion had eaten her calf, refusing food, and often in the company of two other adult females. Giraffe calves are extremely vulnerable to predators, and though mothers will fight valiantly to keep their young alive — kicking forward and backward — half of all calves are killed in their first year of life."
+              },
+              {
+                "label": "",
+                "text": "Male giraffes, known as bulls, generally become more important with age, and older bulls display that dominance physically and behaviorally: as their neck muscles grow, the male’s posture becomes prouder and more vertical. Recent observations show young bulls, when left on their own, mimicking their elders: head held high and neck puffed out. But should a dominant older bull come into view, the younger males instantly try to make themselves look small and innocent."
+              },
+              {
+                "label": "",
+                "text": "The younger bulls have reason to fear their elders. Clashes have been witnessed between adults when each bull repeatedly ‘necks’ the other, using his massive neck to slam his head against his rival. One bull somehow survived with a broken neck."
+              },
+              {
+                "label": "",
+                "text": "The skin of a giraffe is mostly gray. The coat has dark patches separated by light hair, which serves as camouflage, allowing them to blend in with the light and shade patterns of the acacia trees from which they feed. Grazing giraffes are hard to see even a few meters away. Research indicates that giraffes also have excellent sight, can see in color and over great distances, which helps them to spot lions and keep track of each other. In addition, a giraffe’s extraordinary mouth has lips and tongue that can together grasp a branch and then pluck away the leaves while avoiding thorns, almost as humans would grab with their hands. Each day, a giraffe consumes about 30 kilograms of leaves, shoots and vines, all digested in its four-chambered stomach."
+              },
+              {
+                "label": "",
+                "text": "A giraffe can stand more than six meters tall, with its neck accounting for roughly a third of its height and its legs the same. The giraffe’s long neck is due to the length of the vertebrae, not the number of vertebrae. The growth of the neck largely takes place during early childhood, as giraffe mothers would have a difficult time giving birth to young with longer necks. The giraffe’s head and neck are held up by large muscles attached to the lower spine."
+              },
+              {
+                "label": "",
+                "text": "Recent studies show that the greatest challenge to a giraffe’s cardiovascular system is how to both pump blood very high and retrieve it from far below. The outside of a giraffe’s veins are extremely thick, to prevent blood leaking into surrounding tissue. Other adaptations in the cardiovascular system allow the giraffe to bend over for a drink of water, and then raise its head again quickly without fainting."
+              },
+              {
+                "label": "",
+                "text": "Researchers were also surprised to find that a giraffe does not have an unusually large heart. It is half a percent of body mass, the same as in a mouse. Moreover, the amount of blood pumped into circulation is modest, proportionally lower than it is in humans. That could help explain why giraffes rarely run for very long: enough oxygen cannot be delivered to their muscles fast enough for them to keep running."
+              },
+              {
+                "label": "",
+                "text": "Or maybe the giraffes are worried about tripping over their own feet. This is because signals from the nerves travel at about the same speed in giraffes as in rats or other mammals. Given the greater distance they have to travel in the giraffe to reach the brain, it is possible the giraffe faces real challenges in reacting quickly to a rock beneath its hoof or a bite to its ankle."
+              },
+              {
+                "label": "",
+                "text": "New understanding of this wonderful animal sheds light on both its physiology and its behavior. Researchers hope to use this knowledge to increase their ability to work with preservation, as its habitat is reduced and the giraffe becomes scarcer."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "true_false_not_given",
+              "title": "Questions 1-7",
+              "instructionsAndOptions": [
+                "Do the following statements agree with the information given in Reading Passage 1?",
+                "In boxes 1-7 on your answer sheet, write TRUE, FALSE or NOT GIVEN.",
+                "1 The amount of research on giraffes in their natural environment has increased lately.",
+                "2 Megan Strauss disapproves of keeping giraffes in zoos.",
+                "3 The number of giraffes in Africa has nearly doubled.",
+                "4 Female giraffes tend to live longer than males.",
+                "5 Mother giraffes sometimes use their legs to defend their young.",
+                "6 Younger bulls hold their necks higher in the presence of more powerful males.",
+                "7 Male giraffes have been observed fighting."
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5",
+                "q6",
+                "q7"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "1",
+                  "text": "Question 1",
+                  "correctAnswer": "TRUE"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "2",
+                  "text": "Question 2",
+                  "correctAnswer": "NOT GIVEN"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "3",
+                  "text": "Question 3",
+                  "correctAnswer": "FALSE"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "4",
+                  "text": "Question 4",
+                  "correctAnswer": "NOT GIVEN"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "5",
+                  "text": "Question 5",
+                  "correctAnswer": "TRUE"
+                },
+                {
+                  "questionId": "q6",
+                  "number": "6",
+                  "text": "Question 6",
+                  "correctAnswer": "FALSE"
+                },
+                {
+                  "questionId": "q7",
+                  "number": "7",
+                  "text": "Question 7",
+                  "correctAnswer": "TRUE"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "table_completion",
+              "title": "Questions 8-13",
+              "instructionsAndOptions": [
+                "Complete the table below.",
+                "Choose ONE WORD ONLY from the passage for each answer."
+              ],
+              "questionIds": [
+                "q8",
+                "q9",
+                "q10",
+                "q11",
+                "q12",
+                "q13"
+              ],
+              "questions": [
+                {
+                  "questionId": "q8",
+                  "number": "8",
+                  "text": "Question 8",
+                  "correctAnswer": "camouflage"
+                },
+                {
+                  "questionId": "q9",
+                  "number": "9",
+                  "text": "Question 9",
+                  "correctAnswer": "hands"
+                },
+                {
+                  "questionId": "q10",
+                  "number": "10",
+                  "text": "Question 10",
+                  "correctAnswer": "birth"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "11",
+                  "text": "Question 11",
+                  "correctAnswer": "veins"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "12",
+                  "text": "Question 12",
+                  "correctAnswer": "heart"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "13",
+                  "text": "Question 13",
+                  "correctAnswer": "signals"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "1",
+              "question": "Question 1",
+              "userAnswer": "FALSE",
+              "correctAnswer": "TRUE",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "”understand the biology and complex behavior of this graceful giant in its native habitat.“这个this,指的长颈鹿，主要还是没全部翻译出来",
+                "updatedAt": "2026-07-31T12:32:26.587Z"
+              }
+            },
+            {
+              "questionId": "q2",
+              "number": "2",
+              "question": "Question 2",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NOT GIVEN",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "3",
+              "question": "Question 3",
+              "userAnswer": "FALSE",
+              "correctAnswer": "FALSE",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "4",
+              "question": "Question 4",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NOT GIVEN",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "5",
+              "question": "Question 5",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "TRUE",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": {
+                "category": "定位错误",
+                "note": "没找到legs.实际上原文中说，kicking forward and backward,kick是踢的意思",
+                "updatedAt": "2026-07-31T12:34:22.118Z"
+              }
+            },
+            {
+              "questionId": "q6",
+              "number": "6",
+              "question": "Question 6",
+              "userAnswer": "FALSE",
+              "correctAnswer": "FALSE",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "7",
+              "question": "Question 7",
+              "userAnswer": "TRUE",
+              "correctAnswer": "TRUE",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "8",
+              "question": "Question 8",
+              "userAnswer": "camouflage",
+              "correctAnswer": "camouflage",
+              "isCorrect": true,
+              "questionType": "table-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "9",
+              "question": "Question 9",
+              "userAnswer": "hands",
+              "correctAnswer": "hands",
+              "isCorrect": true,
+              "questionType": "table-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "10",
+              "question": "Question 10",
+              "userAnswer": "longer",
+              "correctAnswer": "birth",
+              "isCorrect": false,
+              "questionType": "table-completion",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "定位对了，但是没翻译对，注意as从句，as有可能是因为的意思",
+                "updatedAt": "2026-07-31T12:44:29.395Z"
+              }
+            },
+            {
+              "questionId": "q11",
+              "number": "11",
+              "question": "Question 11",
+              "userAnswer": "thick",
+              "correctAnswer": "veins",
+              "isCorrect": false,
+              "questionType": "table-completion",
+              "wrongReason": {
+                "category": "同义替换没看出",
+                "note": "thick等于extra-strong，填重复了",
+                "updatedAt": "2026-07-31T12:46:38.454Z"
+              }
+            },
+            {
+              "questionId": "q12",
+              "number": "12",
+              "question": "Question 12",
+              "userAnswer": "heart",
+              "correctAnswer": "heart",
+              "isCorrect": true,
+              "questionType": "table-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "13",
+              "question": "Question 13",
+              "userAnswer": "signals",
+              "correctAnswer": "signals",
+              "isCorrect": true,
+              "questionType": "table-completion",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q1",
+              "number": "1",
+              "question": "Question 1",
+              "userAnswer": "FALSE",
+              "correctAnswer": "TRUE",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "”understand the biology and complex behavior of this graceful giant in its native habitat.“这个this,指的长颈鹿，主要还是没全部翻译出来",
+                "updatedAt": "2026-07-31T12:32:26.587Z"
+              }
+            },
+            {
+              "questionId": "q5",
+              "number": "5",
+              "question": "Question 5",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "TRUE",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": {
+                "category": "定位错误",
+                "note": "没找到legs.实际上原文中说，kicking forward and backward,kick是踢的意思",
+                "updatedAt": "2026-07-31T12:34:22.118Z"
+              }
+            },
+            {
+              "questionId": "q10",
+              "number": "10",
+              "question": "Question 10",
+              "userAnswer": "longer",
+              "correctAnswer": "birth",
+              "isCorrect": false,
+              "questionType": "table-completion",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "定位对了，但是没翻译对，注意as从句，as有可能是因为的意思",
+                "updatedAt": "2026-07-31T12:44:29.395Z"
+              }
+            },
+            {
+              "questionId": "q11",
+              "number": "11",
+              "question": "Question 11",
+              "userAnswer": "thick",
+              "correctAnswer": "veins",
+              "isCorrect": false,
+              "questionType": "table-completion",
+              "wrongReason": {
+                "category": "同义替换没看出",
+                "note": "thick等于extra-strong，填重复了",
+                "updatedAt": "2026-07-31T12:46:38.454Z"
+              }
+            }
+          ]
+        },
+        {
+          "examId": "p2-high-16",
+          "title": "The Importance of Law 法律的意义",
+          "category": "P2",
+          "scoreInfo": {
+            "correct": 9,
+            "total": 13,
+            "accuracy": 0.6923076923076923,
+            "percentage": 69,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "The Importance of Law",
+            "subtitle": "",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "A The law influences all of us virtually all the time. It governs almost all aspects of our behaviour, and even what happens to us when we are no longer alive. It affects us from the embryo onwards. It governs the air we breathe, the food and drink we consume, our travel, family relationships, and our property. It applies at the bottom of the ocean and in space. Each time we examine a label on a food product, engage in work as an employee or employer, travel on the roads, go to school to learn or to teach, stay in a hotel, borrow a library book, create or dissolve a commercial company, play sports, or engage the services of someone for anything from plumbing a sink to planning a city, we are in the world of law."
+              },
+              {
+                "label": "",
+                "text": "B Law has also become much more widely recognised as the standard by which behaviour needs to be judged. A very telling development in recent history is the way in which the idea of law has permeated all parts of social life. The universal standard of whether something is socially tolerated is progressively becoming whether it is legal, rather than something that has always been considered acceptable. In earlier times, most people were illiterate. Today, by contrast, a vast number of people can read, and it is becoming easier for people to take an interest in law, and for the general population to help actually shape the law in many countries. However, law is a versatile instrument that can be used equally well for the improvement or the degradation of humanity."
+              },
+              {
+                "label": "",
+                "text": "C This, of course, puts law in a very significant position. In our rapidly developing world, all sorts of skills and knowledge are valuable. Those people, for example, with knowledge of computers, the internet, and communications technology are relied upon by the rest of us. There is now someone with IT skills or an IT help desk in every UK school, every company, every hospital, every local and central government office. Without their knowledge, many parts of commercial and social life today would seize up in minutes. But legal understanding is just as vital and as universally needed. The American comedian Jerry Seinfeld put it like this, 'We are all throwing the dice, playing the game, moving our pieces around the board, but if there is a problem, the lawyer is the only person who has read the inside of the top of the box.' In other words, the lawyer is the only person who has read and made sense of the rules."
+              },
+              {
+                "label": "",
+                "text": "D The number of laws has never been greater. In the UK alone, about 35 new Acts of Parliament are produced every year, thereby delivering thousands of new rules. The legislative output of the British Parliament has more than doubled in recent times from 1,100 pages a year in the early 1970s, to over 2,500 pages a year today. Between 1997 and 2006, the legislature passed 365 Acts of Parliament and more than 32,000 legally binding statutory instruments. In a system with so much law, lawyers do a great deal not just to vindicate the rights of citizens and organisations but also to help develop the law through legal arguments, some of which are adapted by judges to become laws. Law courts can and do produce new law and revise old law, but they do so having heard the arguments of lawyers."
+              },
+              {
+                "label": "",
+                "text": "E However, despite their important role in developing the rules, lawyers are not universally admired. Anti-lawyer jokes have a long history going back to the ancient Greeks. More recently, the son of a famous Hollywood actor was asked at his junior school what his father did for a living, to which he replied, ‘My daddy is a movie actor, and sometimes he plays the good guy, and sometimes, he plays the lawyer.' For balance, though, it is worth remembering that there are and have been many heroic and revered lawyers such as the Roman philosopher and politician Cicero, and Mahatma Gandhi, the Indian campaigner for Independence."
+              },
+              {
+                "label": "",
+                "text": "F People sometimes make comments that characterise lawyers as professionals whose concerns put personal reward above truth, or who gain financially from misfortune. There are undoubtedly lawyers that would fit that bill, just as there are some scientists, journalists and others in that category. But, in general, it is no more just to say that lawyers are bad because they make a living from people's problems than it is to make the same accusation in respect of nurses or IT consultants. A great many lawyers are involved in public law work, such as that involving civil liberties, housing and other issues. Such work is not lavishly remunerated and the quality of the service provided by these lawyers relies on considerable professional dedication. Moreover, much legal work has nothing to do with conflict or misfortune, but is primarily concerned with drafting documents. Another source of social disaffection for lawyers, and disaffection for the law, is a limited public understanding of how law works and how it could be changed. Greater clarity about these issues, maybe as a result of better public relations, would reduce many aspects of public dissatisfaction with the law."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "matching",
+              "title": "Questions 14–19",
+              "instructionsAndOptions": [
+                "Reading Passage 2 has six paragraphs, A–F .",
+                "Choose the correct heading for each paragraph from the list of headings below."
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5",
+                "q6"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "14",
+                  "text": "Question 14",
+                  "correctAnswer": "iv"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "15",
+                  "text": "Question 15",
+                  "correctAnswer": "vii"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "16",
+                  "text": "Question 16",
+                  "correctAnswer": "i"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "17",
+                  "text": "Question 17",
+                  "correctAnswer": "viii"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "18",
+                  "text": "Question 18",
+                  "correctAnswer": "vi"
+                },
+                {
+                  "questionId": "q6",
+                  "number": "19",
+                  "text": "Question 19",
+                  "correctAnswer": "ii"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "multi_choice",
+              "title": "Questions 20–21",
+              "instructionsAndOptions": [
+                "Choose TWO letters, A–E .",
+                "Which TWO of the following statements does the writer make about legal skills in today's world?"
+              ],
+              "questionIds": [
+                "q7",
+                "q8"
+              ],
+              "questions": [
+                {
+                  "questionId": "q7",
+                  "number": "20",
+                  "text": "Question 20",
+                  "correctAnswer": "C"
+                },
+                {
+                  "questionId": "q8",
+                  "number": "21",
+                  "text": "Question 21",
+                  "correctAnswer": "D"
+                }
+              ]
+            },
+            {
+              "groupId": "group-3",
+              "kind": "summary_completion",
+              "title": "Questions 22–26",
+              "instructionsAndOptions": [
+                "Complete the summary below. Choose ONE WORD ONLY from the passage for each answer.",
+                "People sometimes say that 22 is of little interest to lawyers, who are more concerned with making money. This may well be the case with some individuals, in the same way that some 23 or scientific experts may also be driven purely by financial greed. However, criticising lawyers because their work is concerned with people's problems would be similar to attacking IT staff or 24 for the same reason. In fact, many lawyers focus on questions relating, for example, to housing or civil liberties, which requires them to have 25 to their work. What's more, a lot of lawyers' time is spent writing 26 rather than dealing with people's misfortunes."
+              ],
+              "questionIds": [
+                "q9",
+                "q10",
+                "q11",
+                "q12",
+                "q13"
+              ],
+              "questions": [
+                {
+                  "questionId": "q9",
+                  "number": "22",
+                  "text": "Question 22",
+                  "correctAnswer": "truth"
+                },
+                {
+                  "questionId": "q10",
+                  "number": "23",
+                  "text": "Question 23",
+                  "correctAnswer": "journalists"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "24",
+                  "text": "Question 24",
+                  "correctAnswer": "nurses"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "25",
+                  "text": "Question 25",
+                  "correctAnswer": "dedication"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "26",
+                  "text": "Question 26",
+                  "correctAnswer": "documents"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "14",
+              "question": "Question 14",
+              "userAnswer": "iv",
+              "correctAnswer": "iv",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q2",
+              "number": "15",
+              "question": "Question 15",
+              "userAnswer": "v",
+              "correctAnswer": "vii",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": {
+                "category": "其他",
+                "note": "heading题目，不会",
+                "updatedAt": "2026-07-31T12:48:57.910Z"
+              }
+            },
+            {
+              "questionId": "q3",
+              "number": "16",
+              "question": "Question 16",
+              "userAnswer": "i",
+              "correctAnswer": "i",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "17",
+              "question": "Question 17",
+              "userAnswer": "viii",
+              "correctAnswer": "viii",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "18",
+              "question": "Question 18",
+              "userAnswer": "vi",
+              "correctAnswer": "vi",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "19",
+              "question": "Question 19",
+              "userAnswer": "ii",
+              "correctAnswer": "ii",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "20",
+              "question": "Question 20",
+              "userAnswer": [
+                "B",
+                "D"
+              ],
+              "correctAnswer": "C",
+              "isCorrect": false,
+              "questionType": "other",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "没读懂题目",
+                "updatedAt": "2026-07-31T12:50:28.932Z"
+              }
+            },
+            {
+              "questionId": "q8",
+              "number": "21",
+              "question": "Question 21",
+              "userAnswer": [
+                "B",
+                "D"
+              ],
+              "correctAnswer": "D",
+              "isCorrect": true,
+              "questionType": "other",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "没读懂题目",
+                "updatedAt": "2026-07-31T12:50:18.582Z"
+              }
+            },
+            {
+              "questionId": "q9",
+              "number": "22",
+              "question": "Question 22",
+              "userAnswer": "comments",
+              "correctAnswer": "truth",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "没翻译出来。定位也错了，在后面一句。dedication奉献",
+                "updatedAt": "2026-07-31T13:13:54.497Z"
+              }
+            },
+            {
+              "questionId": "q10",
+              "number": "23",
+              "question": "Question 23",
+              "userAnswer": "journalists",
+              "correctAnswer": "journalists",
+              "isCorrect": true,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "24",
+              "question": "Question 24",
+              "userAnswer": "nurses",
+              "correctAnswer": "nurses",
+              "isCorrect": true,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q12",
+              "number": "25",
+              "question": "Question 25",
+              "userAnswer": "involved",
+              "correctAnswer": "dedication",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "没翻译出来。。XX is of little interest to lawyers,，XX对律师没有很大的意义（interest）",
+                "updatedAt": "2026-07-31T13:08:00.016Z"
+              }
+            },
+            {
+              "questionId": "q13",
+              "number": "26",
+              "question": "Question 26",
+              "userAnswer": "documents",
+              "correctAnswer": "documents",
+              "isCorrect": true,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q2",
+              "number": "15",
+              "question": "Question 15",
+              "userAnswer": "v",
+              "correctAnswer": "vii",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": {
+                "category": "其他",
+                "note": "heading题目，不会",
+                "updatedAt": "2026-07-31T12:48:57.910Z"
+              }
+            },
+            {
+              "questionId": "q7",
+              "number": "20",
+              "question": "Question 20",
+              "userAnswer": [
+                "B",
+                "D"
+              ],
+              "correctAnswer": "C",
+              "isCorrect": false,
+              "questionType": "other",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "没读懂题目",
+                "updatedAt": "2026-07-31T12:50:28.932Z"
+              }
+            },
+            {
+              "questionId": "q9",
+              "number": "22",
+              "question": "Question 22",
+              "userAnswer": "comments",
+              "correctAnswer": "truth",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "没翻译出来。定位也错了，在后面一句。dedication奉献",
+                "updatedAt": "2026-07-31T13:13:54.497Z"
+              }
+            },
+            {
+              "questionId": "q12",
+              "number": "25",
+              "question": "Question 25",
+              "userAnswer": "involved",
+              "correctAnswer": "dedication",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": {
+                "category": "题干理解错误",
+                "note": "没翻译出来。。XX is of little interest to lawyers,，XX对律师没有很大的意义（interest）",
+                "updatedAt": "2026-07-31T13:08:00.016Z"
+              }
+            }
+          ]
+        },
+        {
+          "examId": "p3-low-42",
+          "title": "The peopling of Patagonia 巴塔哥尼亚的人类迁徙",
+          "category": "P3",
+          "scoreInfo": {
+            "correct": 7,
+            "total": 14,
+            "accuracy": 0.5,
+            "percentage": 50,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "The Peopling of Patagonia",
+            "subtitle": "",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "The human settlement of the southern extremity of the Americas has always fascinated prehistorians. Viewed from a global perspective, this was the last major continental land mass to be reached by human beings. The earliest occupation of Patagonia carries obvious implications for understanding when the North and South American continents were peopled, because it gives a baseline that all calculations regarding the rate of dispersion of humans throughout both continents must take into account."
+              },
+              {
+                "label": "",
+                "text": "For many years the human settlement of North and South America has been conceived of as beginning in the far north and travelling progressively southwards to Patagonia. However, fundamental disagreements developed concerning the length of time involved. Some scholars accepted a human presence in the Americas as early as 20,000 years ago, while others proposed that it could date no earlier than 8,000 years ago, and the debate is still with us today."
+              },
+              {
+                "label": "",
+                "text": "The idea of a relatively ‘late' settlement of the Americas (around 8,000 years ago) implies that a rapid process of migration took place. Herein lies a second debate, which revolves around the question of how migration is to be understood. The ‘late' model demands a hypothetical migration conceived of as a single, continually advancing wave of settlement. This has always been difficult to take seriously, and many scholars now support the idea of an 'early' model that sees the migration as a less ordered migration, and this is surely the most realistic scenario as migrants slowly adapted to the diverse natural habitats they would have met while travelling through the continent."
+              },
+              {
+                "label": "",
+                "text": "Those who argue for an earlier settlement, however, must contend with the lack of unequivocal evidence for archaeological sites older than around 14,000 years. Nevertheless, evidence for human occupation of the centre of South America is now securely dated to around 12,500 years ago at the Monte Verde site, which casts doubt on the 'late' model. The lack of archaeological evidence further south for this time period may be explained by the obstacle to humans on foot posed by the huge glacial streams that were present at that time."
+              },
+              {
+                "label": "",
+                "text": "We can speculate then that the retreat of the Patagonian glaciers around 14,000 years ago allowed the initial human intrusion into a pristine environment, which was similar to that of early post-glacial Europe. Human settlement of the vast horizontal expanse of treeless high country must have been tenuous at best, and the evidence for this occupation remains relatively scant, most of it coming from rock shelters in Argentina and Chile. There is, however, reliable evidence from these sites to confirm the presence of humans by around 11,000 years ago in different habitats, and some hints of an even older occupation. However, some other sites where evidence for even earlier human occupation was initially posited have recently come under fresh scrutiny. This is because anthropologists have come to recognise that bones or other evidence may be deposited in caves by natural agency—in other words, by other forces such as floods or predators—and not necessarily by humans."
+              },
+              {
+                "label": "",
+                "text": "We shall turn now to a more detailed discussion of the archaeological evidence found in various parts of Patagonia. At the site located beside Chinchihuapi Creek, excavations have produced convincing evidence of human occupation, including hut foundations and wooden artefacts. They were buried in layers of peat, which has the property of preserving wood remarkably well, and as a result, radiocarbon dating tests have shown these artefacts to date from around 12,500 years ago. One of the most famous Patagonian sites is a cave known as Los Toldos. However, the evidence from this site has recently been called into question, because dispersed flecks of carbon used in the test process were taken unsystematically from many different places at the site. As a result, the association of this material with the artefacts is not at all clear. About 150 kilometres to the south is the site called El Ceibo, where a similar collection of artefacts to that found at Los Toldos has been discovered from the lowest levels of the dig, but as yet no radiocarbon dates are available, and this sort of analysis of the existing evidence is required before the site's value can be confirmed."
+              },
+              {
+                "label": "",
+                "text": "The Arroyo Eeo site is located very close to the high plateau. The artefacts from the earliest occupations were found at the same depth and have the same origins as those from Los Toldos, and have been securely dated to around 9,000 years ago. Another site that is mentioned in the debate is at Las Buitreras, where a number of stone flakes associated with bone remains of various animals have been discovered. However, anthropologists now believe that presumed cut marks on the bones are somewhat dubious, and despite detailed testing there is no way of securely relating any of these remains to human occupation. Finally, some 50 kilometres to the south is the site at Cueva Fell, which was the first Patagonian site to be systematically studied by modern archaeological methods. However, it is now recognised that the utility of this site must be restricted to its direct vicinity, given changes to the nearby area caused by flooding, and findings cannot be freely extrapolated further afield."
+              },
+              {
+                "label": "",
+                "text": "In conclusion, based on the evidence from a number of reliable sites, it seems probable that human populations reached Patagonia around 11,000 years ago."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "single_choice",
+              "title": "Questions 27–31",
+              "instructionsAndOptions": [
+                "Choose the correct letter, A, B, C or D.",
+                "27 In the first paragraph, what is the writer's main point about migration to Patagonia?",
+                "A It started earlier than previously thought. B Historians have overlooked its importance. C It impacts on research into the wider region. D Researchers have calculated its effects on the environment.",
+                "28 In the second paragraph, what is the writer's purpose?",
+                "A to challenge previous research B to propose new areas to investigate C to summarise a scholarly debate D to suggest reasons for human migration",
+                "29 The writer refers to the 'late' model in order to",
+                "A compare it with another theory of migration. B evaluate the success of American migration. C criticise the speed of research into migration. D compare migration in different parts of the world.",
+                "30 What is the writer's main point about the ‘early' model?",
+                "A Scholars support the idea of fast migrations. B It is too random to be a convincing theory. C South America was more habitable at an earlier time. D It is more consistent with the physical conditions of the land.",
+                "31 What does the writer suggest about the Monte Verde site?",
+                "A It is much younger than researchers once estimated. B It provides supporting evidence for relatively early settlement. C Archaeologists believe the site is of questionable value. D Streams exposed the site, making new research possible."
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "27",
+                  "text": "Question 27",
+                  "correctAnswer": "C"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "28",
+                  "text": "Question 28",
+                  "correctAnswer": "C"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "29",
+                  "text": "Question 29",
+                  "correctAnswer": "A"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "30",
+                  "text": "Question 30",
+                  "correctAnswer": "D"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "31",
+                  "text": "Question 31",
+                  "correctAnswer": "B"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "yes_no_not_given",
+              "title": "Questions 32–35",
+              "instructionsAndOptions": [
+                "Do the following statements agree with the claims of the writer in Reading Passage 3? Write YES, NO, or NOT GIVEN.",
+                "32 The conditions encountered by the first migrants to Patagonia were unique.",
+                "YES NO NOT GIVEN",
+                "33 In the high country the first migrants hunted wild animals for food.",
+                "YES NO NOT GIVEN",
+                "34 Archaeologists have failed to draw conclusions from the evidence found at rock shelters in Argentina and Chile.",
+                "YES NO NOT GIVEN",
+                "35 Archaeological evidence can be moved from place to place in a variety of ways.",
+                "YES NO NOT GIVEN"
+              ],
+              "questionIds": [
+                "q6",
+                "q7",
+                "q8",
+                "q9"
+              ],
+              "questions": [
+                {
+                  "questionId": "q6",
+                  "number": "32",
+                  "text": "Question 32",
+                  "correctAnswer": "NO"
+                },
+                {
+                  "questionId": "q7",
+                  "number": "33",
+                  "text": "Question 33",
+                  "correctAnswer": "NOT GIVEN"
+                },
+                {
+                  "questionId": "q8",
+                  "number": "34",
+                  "text": "Question 34",
+                  "correctAnswer": "NO"
+                },
+                {
+                  "questionId": "q9",
+                  "number": "35",
+                  "text": "Question 35",
+                  "correctAnswer": "YES"
+                }
+              ]
+            },
+            {
+              "groupId": "group-3",
+              "kind": "matching",
+              "title": "Questions 36–40",
+              "instructionsAndOptions": [
+                "Complete the summary using the list of words and phrases, A–J, below.",
+                "Drag a phrase from the list and drop it into the correct blank.",
+                "Building remains and other evidence have been found in 36 at the Chinchihuapi Creek site, and because of this it has been possible to date them to around 12,500 years ago. However, the 37 of the samples taken from Los Toldos means that this site is of doubtful value. El Ceibo is a more promising dig, where the examination of artefacts would be beneficial in order to confirm the usefulness of discoveries there. The remains found at the Arroyo Eeo site show 38 and date from around 9,000 years ago. Unfortunately, no 39 can be made between the samples taken from Las Buitreras and human presence. The findings of the work carried out at Cueva Fell cannot provide useful information beyond the 40 . In conclusion, though the evidence is mixed, it is believed that the human population of Patagonia began about 11,000 years ago."
+              ],
+              "questionIds": [
+                "q10",
+                "q11",
+                "q12",
+                "q13",
+                "q14"
+              ],
+              "questions": [
+                {
+                  "questionId": "q10",
+                  "number": "36",
+                  "text": "Question 36",
+                  "correctAnswer": "D"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "37",
+                  "text": "Question 37",
+                  "correctAnswer": "B"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "38",
+                  "text": "Question 38",
+                  "correctAnswer": "C"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "39",
+                  "text": "Question 39",
+                  "correctAnswer": "H"
+                },
+                {
+                  "questionId": "q14",
+                  "number": "40",
+                  "text": "Question 40",
+                  "correctAnswer": "J"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "27",
+              "question": "Question 27",
+              "userAnswer": "C",
+              "correctAnswer": "C",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q2",
+              "number": "28",
+              "question": "Question 28",
+              "userAnswer": "C",
+              "correctAnswer": "C",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "29",
+              "question": "Question 29",
+              "userAnswer": "D",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "",
+                "updatedAt": "2026-07-31T15:30:06.524Z"
+              }
+            },
+            {
+              "questionId": "q4",
+              "number": "30",
+              "question": "Question 30",
+              "userAnswer": "D",
+              "correctAnswer": "D",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "31",
+              "question": "Question 31",
+              "userAnswer": "B",
+              "correctAnswer": "B",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "32",
+              "question": "Question 32",
+              "userAnswer": "YES",
+              "correctAnswer": "NO",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "33",
+              "question": "Question 33",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NOT GIVEN",
+              "isCorrect": true,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "34",
+              "question": "Question 34",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NO",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "35",
+              "question": "Question 35",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "YES",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "36",
+              "question": "Question 36",
+              "userAnswer": "I",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "37",
+              "question": "Question 37",
+              "userAnswer": "A",
+              "correctAnswer": "B",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": {
+                "category": "",
+                "note": "fixed date",
+                "updatedAt": "2026-07-31T15:26:29.776Z"
+              }
+            },
+            {
+              "questionId": "q12",
+              "number": "38",
+              "question": "Question 38",
+              "userAnswer": "C",
+              "correctAnswer": "C",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "39",
+              "question": "Question 39",
+              "userAnswer": "H",
+              "correctAnswer": "H",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q14",
+              "number": "40",
+              "question": "Question 40",
+              "userAnswer": "B",
+              "correctAnswer": "J",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q3",
+              "number": "29",
+              "question": "Question 29",
+              "userAnswer": "D",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": {
+                "category": "原文理解错误",
+                "note": "",
+                "updatedAt": "2026-07-31T15:30:06.524Z"
+              }
+            },
+            {
+              "questionId": "q6",
+              "number": "32",
+              "question": "Question 32",
+              "userAnswer": "YES",
+              "correctAnswer": "NO",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "34",
+              "question": "Question 34",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NO",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "35",
+              "question": "Question 35",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "YES",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "36",
+              "question": "Question 36",
+              "userAnswer": "I",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "37",
+              "question": "Question 37",
+              "userAnswer": "A",
+              "correctAnswer": "B",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": {
+                "category": "",
+                "note": "fixed date",
+                "updatedAt": "2026-07-31T15:26:29.776Z"
+              }
+            },
+            {
+              "questionId": "q14",
+              "number": "40",
+              "question": "Question 40",
+              "userAnswer": "B",
+              "correctAnswer": "J",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "suiteId": "suite_ms9j16o0_099bac",
+      "title": "08月01日套题练习1",
+      "recordDateUtc": "2026-07-31T23:41:18.644Z",
+      "score": 25,
+      "totalQuestions": 40,
+      "accuracy": 0.625,
+      "passages": [
+        {
+          "examId": "p1-high-01",
+          "title": "A Brief History of Tea 茶叶简史",
+          "category": "P1",
+          "scoreInfo": {
+            "correct": 11,
+            "total": 13,
+            "accuracy": 0.8461538461538461,
+            "percentage": 85,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "A Brief History of Tea",
+            "subtitle": "",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "A The story of tea began in ancient China over 5,000 years ago. According to legend, the Emperor Shen Nung was a skilled ruler, creative scientist and patron of the arts. His far-sighted edicts required, among other things, that all drinking water be boiled as a hygienic precaution. One summer day, while visiting a distant region of his realm, he and the court stopped to rest. In accordance with his ruling, the servants began to boil water for the court to drink. Dried leaves from a nearby bush fell into the boiling water, and as the leaves infused the water turned brown. As a scientist, the Emperor was intrigued by the new liquid, drank some, and found it very refreshing. And so, according to legend, tea was created."
+              },
+              {
+                "label": "",
+                "text": "B Tea consumption spread throughout Chinese culture, reaching into every aspect of society. The first definitive book was written on tea a book clearly reflecting Zen Buddhist philosophy – 1,200 years ago. The first tea seeds were brought to Japan by a returning Buddhist priest, who had seen the value of tea in enhancing meditation in China. As a result, he is known as the “Father of Tea” in Japan. Because of this early association, tea in Japan has always been linked with Zen Buddhism. Tea received the Japanese Emperor's support almost instantly and spread rapidly from the royal court and monasteries to other sections of society."
+              },
+              {
+                "label": "",
+                "text": "C Tea was elevated to an art form in the Japanese tea ceremony, in which supreme importance is given to making tea in the most perfect, most polite, most graceful, most charming manner possible. Such a purity of expression prompted the creation of a particular form of architecture for tea houses, duplicating the simplicity of a forest cottage. The cultural/artistic hostesses of Japan, the geishas, began to specialise in the presentation of the tea ceremony. However, as more and more people became involved in the excitement surrounding tea, the purity of the original concept was lost, and for a period the tea ceremony became corrupted, boisterous and highly embellished. Efforts were then made to return to the earlier simplicity, with the result that, in the 15th and 16th centuries, tea was viewed as the ultimate gift. Even warlords paused for tea before battles."
+              },
+              {
+                "label": "",
+                "text": "D While tea was at this high level of development in parts of Asia, information concerning the then-unknown beverage began to filter back to Europe. Earlier traders had mentioned it, but were unclear as to whether tea should be eaten or drunk. The first European to personally encounter tea and write about it was Portuguese – Portugal, with her technologically advanced navy, had been successful in gaining the first right of trade with China."
+              },
+              {
+                "label": "",
+                "text": "E Tea finally arrived in Europe in the 16th century, brought to Holland by the country's navy, and became very fashionable in the Dutch capital, The Hague. This was due in part to tea being very expensive (over $100 per pound), which immediately made it the domain of the wealthy. Slowly, as the amount of tea imported increased, the price fell, and by 1675 it was available in common food shops throughout Holland."
+              },
+              {
+                "label": "",
+                "text": "F As the consumption of tea increased dramatically in Dutch society, doctors and university authorities in Holland argued as to its benefits or drawbacks. The public largely ignored the scholarly debate and continued to enjoy their new beverage, though the controversy lasted from 1635 to roughly 1657. Throughout this period, France and Holland led Europe in the use of tea."
+              },
+              {
+                "label": "",
+                "text": "G As the craze for all things oriental swept through Europe, tea became part of everyday life. Adding milk to the drink was first mentioned in 1680. Around that time, Dutch inns provided the first restaurant service of tea. Innkeepers would furnish guests with a portable tea set complete with a heating unit. The Dutchman would then prepare tea for himself and his friends outside in the inn garden. Tea remained popular in France for only about fifty years, being replaced by a preference for wine, chocolate and exotic coffees. Tea was introduced into England in 1660 by King Charles II and his Portuguese queen, who were both confirmed tea drinkers. Tea mania swept across England as it had earlier spread throughout France and Holland. By 1708, tea importation had risen to thirteen times the 1699 level. Tea was drunk by all levels of society."
+              },
+              {
+                "label": "",
+                "text": "H Russian interest in tea began as early as 1618, when the Chinese embassy in Moscow presented several chests of tea to the Emperor, Czar Alexis. Later in the century, a trade treaty between Russia and China allowed caravans to cross back and forth freely between the two countries. Still, the journey was not easy. The average caravan consisted of 200 to 300 camels, and the 18,000-kilometre trip took over 16 months to complete. Eventually, however, tea became – as it still is – one of the most popular drinks in the country."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "matching",
+              "title": "Questions 1–8",
+              "instructionsAndOptions": [
+                "Reading Passage 1 has eight paragraphs A–H .",
+                "Choose the correct heading for each paragraph from the list of headings below.",
+                "Drag a heading from the list and drop it onto the correct paragraph's answer box on the left."
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5",
+                "q6",
+                "q7",
+                "q8"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "1",
+                  "text": "Question 1",
+                  "correctAnswer": "viii"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "2",
+                  "text": "Question 2",
+                  "correctAnswer": "iv"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "3",
+                  "text": "Question 3",
+                  "correctAnswer": "ix"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "4",
+                  "text": "Question 4",
+                  "correctAnswer": "vi"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "5",
+                  "text": "Question 5",
+                  "correctAnswer": "v"
+                },
+                {
+                  "questionId": "q6",
+                  "number": "6",
+                  "text": "Question 6",
+                  "correctAnswer": "vii"
+                },
+                {
+                  "questionId": "q7",
+                  "number": "7",
+                  "text": "Question 7",
+                  "correctAnswer": "iii"
+                },
+                {
+                  "questionId": "q8",
+                  "number": "8",
+                  "text": "Question 8",
+                  "correctAnswer": "x"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "matching",
+              "title": "Questions 9–13",
+              "instructionsAndOptions": [
+                "Look at the following statements (Questions 9–13) and the list of countries below.",
+                "Match each statement with the correct country, A–G .",
+                "9 Claims that tea might be harmful failed to affect its popularity.",
+                "10 Tea lost favour to other drinks.",
+                "11 Special buildings were constructed in which to drink tea.",
+                "12 Animals were involved in importing tea.",
+                "13 A ruler's specialist knowledge led to an interest in tea."
+              ],
+              "questionIds": [
+                "q9",
+                "q10",
+                "q11",
+                "q12",
+                "q13"
+              ],
+              "questions": [
+                {
+                  "questionId": "q9",
+                  "number": "9",
+                  "text": "Question 9",
+                  "correctAnswer": "D"
+                },
+                {
+                  "questionId": "q10",
+                  "number": "10",
+                  "text": "Question 10",
+                  "correctAnswer": "E"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "11",
+                  "text": "Question 11",
+                  "correctAnswer": "B"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "12",
+                  "text": "Question 12",
+                  "correctAnswer": "G"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "13",
+                  "text": "Question 13",
+                  "correctAnswer": "A"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "1",
+              "question": "Question 1",
+              "userAnswer": "viii",
+              "correctAnswer": "viii",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q2",
+              "number": "2",
+              "question": "Question 2",
+              "userAnswer": "iv",
+              "correctAnswer": "iv",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "3",
+              "question": "Question 3",
+              "userAnswer": "ix",
+              "correctAnswer": "ix",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "4",
+              "question": "Question 4",
+              "userAnswer": "iii",
+              "correctAnswer": "vi",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "5",
+              "question": "Question 5",
+              "userAnswer": "v",
+              "correctAnswer": "v",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "6",
+              "question": "Question 6",
+              "userAnswer": "vii",
+              "correctAnswer": "vii",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "7",
+              "question": "Question 7",
+              "userAnswer": "vi",
+              "correctAnswer": "iii",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "8",
+              "question": "Question 8",
+              "userAnswer": "x",
+              "correctAnswer": "x",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "9",
+              "question": "Question 9",
+              "userAnswer": "D",
+              "correctAnswer": "D",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "10",
+              "question": "Question 10",
+              "userAnswer": "E",
+              "correctAnswer": "E",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "11",
+              "question": "Question 11",
+              "userAnswer": "B",
+              "correctAnswer": "B",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q12",
+              "number": "12",
+              "question": "Question 12",
+              "userAnswer": "G",
+              "correctAnswer": "G",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "13",
+              "question": "Question 13",
+              "userAnswer": "A",
+              "correctAnswer": "A",
+              "isCorrect": true,
+              "questionType": "matching-features",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q4",
+              "number": "4",
+              "question": "Question 4",
+              "userAnswer": "iii",
+              "correctAnswer": "vi",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "7",
+              "question": "Question 7",
+              "userAnswer": "vi",
+              "correctAnswer": "iii",
+              "isCorrect": false,
+              "questionType": "matching-features",
+              "wrongReason": null
+            }
+          ]
+        },
+        {
+          "examId": "p2-low-222",
+          "title": "Ideal Homes 理想居所",
+          "category": "P2",
+          "scoreInfo": {
+            "correct": 7,
+            "total": 13,
+            "accuracy": 0.5384615384615384,
+            "percentage": 54,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "Ideal Homes",
+            "subtitle": "New ideas and some old ones",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "New ideas and some old ones"
+              },
+              {
+                "label": "A",
+                "text": "The traditional kampung houses of Malaysia do not need air‑conditioning. Built on stilts and with steep roofs, they have year‑round ventilation. The raised structure ensures a cooling breeze comes up through the floorboards, while the high roof acts as a chimney to release hot air. The airtight, concrete boxes of modern city construction, in contrast, are heat traps, says Muhammad Peter Davis of University Putra Malaysia. He has calculated that typical modern Malaysian houses are 5°C hotter than the air outside. The builders of kampung houses \"had no knowledge of modern science or engineering but they came up with the perfect design,\" says Davis."
+              },
+              {
+                "label": "B",
+                "text": "This story of ancient architectural sophistication and modern insanity is repeated around the world. In the name of modernism, people have thrown away architecture designed to cope with the environment in which they live, and adopted house designs originating from cold, northern environments, where the idea is to keep heat in."
+              },
+              {
+                "label": "C",
+                "text": "Once, the aim of architectural modernists was to build structures that kept nature out and to replace it with air‑conditioning. Now they are learning that they cannot do that effectively. Slowly, they are seeing the benefit of working with nature, rather than against it. In California, they probably use more power for air‑conditioning than anywhere else on Earth. According to Arthur Rosenfeld from the University of California, what California needs is white paint. If Los Angeles painted its roofs white, planted trees to shade buildings, and chose lighter‑colored paving, it could reduce city temperatures by 3°C and cut the annual air‑conditioning bill by US$170 million a year."
+              },
+              {
+                "label": "D",
+                "text": "Modern buildings are greedy in their use of energy. Much is made of the contribution of transportation to global warming, through its emissions of greenhouse gases. But, globally, transportation is responsible for just 22 per cent of carbon dioxide emissions. The building sector is responsible for 31 per cent, mostly the result of heating and air‑conditioning systems. In developing countries, where demand for electricity for buildings is rising by 5 per cent a year, the biggest demand is for air‑conditioning in modern buildings which are often designed to cope with every different climatic condition."
+              },
+              {
+                "label": "E",
+                "text": "Before air‑conditioning, much of the Arab world kept cool through thoughtful building design. Many buildings were built according to the principles of the wind tower, a tall structure with vertical vents at the top that open in all directions to catch any passing breeze. Typically, these wind‑tower buildings were made of local materials such as stone, mud brick, wood and palm‑tree fronds. The buildings were inward‑looking, which served the dual function of focusing attention on the courtyard, where family members spend time together, and protecting living areas from the rays of the sun."
+              },
+              {
+                "label": "F",
+                "text": "Throughout the Middle East today, wind towers are often little more than museum pieces. But there are exceptions. Jordan has won awards for the architecture of a village on the shores of the Red Sea, which is designed to conserve energy. Made of rough, local stone in a traditional style, it combines the ventilation system of the wind towers for summer coolness with up‑to‑date heating and floor insulation to protect against the desert cold in winter."
+              },
+              {
+                "label": "G",
+                "text": "Traditional building materials, like traditional building designs, are being rediscovered by those looking for low‑energy solutions to the current construction needs. Clay is one such material: As the Dutch housing contractor R van der Ley has argued in promoting a series of clay housing projects in developing countries, clay has many benefits over its industrialized version, brick. Clay blocks cost only half as much as ordinary bricks. Clay also generates work because people can find it, mould it, bake it and work it themselves. Two hundred clay bricks can be made with the fuel oil that makes just one ordinary brick. Moreover, clay is an excellent insulator against both cold and heat outside, and can easily be recycled."
+              },
+              {
+                "label": "H",
+                "text": "But although traditional methods and materials can be revived in appropriate settings, new green, low‑energy technologies are needed, especially in urban environments. The thermal insulation of homes in cold countries is an example. In 1983, Sweden adopted a national standard, requiring the country's homes to lose no more than 60 kilowatt‑hours per square metre over the year. To meet that standard, windows were double‑glazed, and walls and roofs insulated. Every home became a fortress against the cold air outside. Unfortunately, the rest of Europe has not followed the lead."
+              },
+              {
+                "label": "I",
+                "text": "In the United States, Amory Lovins has promoted a range of low‑energy technologies: \"super‑windows\", for example, which let in invisible light but can be \"tuned\" to either allow in, or reflect away, infrared solar radiation — the stuff that heats. Buildings with large expanses of window (and big energy bills) can be designed to achieve optimum temperatures."
+              },
+              {
+                "label": "J",
+                "text": "As well as more efficient use of energy, the world also needs new sources of renewable power. Solar energy is being tried out in the developing world, in villages often far from electricity grids. The world's biggest solar power installation got underway in the Philippines, in 2001, where a project commenced to install solar panels for 400,000 people in 150 villages. Such projects are demonstrating that countries, whether developing or developed, no longer need huge national grids to supply electricity. Every home can do its own thing with the help of a solar panel and a storage battery."
+              },
+              {
+                "label": "K",
+                "text": "Houses, of course, are more than machines for living in. They are social and psychological spaces, too. Future houses may not look exactly like kampungs or wind towers or any other traditional models. But to work for us and for our environment, they will have to suit us as well as these traditional forms did."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "short_answer",
+              "title": "Questions 14–18",
+              "instructionsAndOptions": [
+                "The reading passage has eleven paragraphs A–K.",
+                "Which paragraph contains the following information?",
+                "Write the correct letter, A–K, in boxes 14–18.",
+                "NB You may use any letter more than once."
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "14",
+                  "text": "14. reasons why a particular construction material is advantageous",
+                  "correctAnswer": "G"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "15",
+                  "text": "15. an example of a construction design which benefits domestic interaction",
+                  "correctAnswer": "E"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "16",
+                  "text": "16. a description of a house that is ventilated from below",
+                  "correctAnswer": "A"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "17",
+                  "text": "17. an example of self‑sufficient energy supply",
+                  "correctAnswer": "J"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "18",
+                  "text": "18. suggested methods of reducing temperatures in a city",
+                  "correctAnswer": "C"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "short_answer",
+              "title": "Questions 19–22",
+              "instructionsAndOptions": [
+                "Look at the following people and the list of ideas below.",
+                "Match each person with the correct idea, A–G.",
+                "Write the correct letter, A–G, in boxes 19–22.",
+                "List of ideas",
+                "A The choice of a certain construction material can have a socio‑economic impact. B Throughout the world, people are rejecting traditional housing design in order to appear modern. C Houses should not only meet people's physical needs but also their social and psychological needs. D Traditional knowledge can be superior to modern knowledge. E There is an innovation that can save costs on both air‑conditioning and heating. F Solar energy can meet the energy needs of people living in villages in developing countries. G There is a very simple solution that can save on the cost of air‑conditioning."
+              ],
+              "questionIds": [
+                "q6",
+                "q7",
+                "q8",
+                "q9"
+              ],
+              "questions": [
+                {
+                  "questionId": "q6",
+                  "number": "19",
+                  "text": "19. Muhammad Peter Davis",
+                  "correctAnswer": "D"
+                },
+                {
+                  "questionId": "q7",
+                  "number": "20",
+                  "text": "20. Arthur Rosenfeld",
+                  "correctAnswer": "G"
+                },
+                {
+                  "questionId": "q8",
+                  "number": "21",
+                  "text": "21. R van der Ley",
+                  "correctAnswer": "A"
+                },
+                {
+                  "questionId": "q9",
+                  "number": "22",
+                  "text": "22. Amory Lovins",
+                  "correctAnswer": "E"
+                }
+              ]
+            },
+            {
+              "groupId": "group-3",
+              "kind": "true_false_not_given",
+              "title": "Questions 23–26",
+              "instructionsAndOptions": [
+                "Do the following statements agree with the information in Reading Passage 2?",
+                "Write TRUE , FALSE or NOT GIVEN ."
+              ],
+              "questionIds": [
+                "q10",
+                "q11",
+                "q12",
+                "q13"
+              ],
+              "questions": [
+                {
+                  "questionId": "q10",
+                  "number": "23",
+                  "text": "23. The air temperature in modern Malaysian houses is lower than the air temperature outside.",
+                  "correctAnswer": "False"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "24",
+                  "text": "24. The construction industry is more to blame than transport for global warming.",
+                  "correctAnswer": "True"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "25",
+                  "text": "25. The use of wind towers for cooling is widespread in the Middle East today.",
+                  "correctAnswer": "False"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "26",
+                  "text": "26. The 'super‑windows' promoted by Amory Lovins can be installed at low cost.",
+                  "correctAnswer": "Not Given"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "14",
+              "question": "14. reasons why a particular construction material is advantageous",
+              "userAnswer": "G",
+              "correctAnswer": "G",
+              "isCorrect": true,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q2",
+              "number": "15",
+              "question": "15. an example of a construction design which benefits domestic interaction",
+              "userAnswer": "A",
+              "correctAnswer": "E",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "16",
+              "question": "16. a description of a house that is ventilated from below",
+              "userAnswer": "E",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "17",
+              "question": "17. an example of self‑sufficient energy supply",
+              "userAnswer": "D",
+              "correctAnswer": "J",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "18",
+              "question": "18. suggested methods of reducing temperatures in a city",
+              "userAnswer": "C",
+              "correctAnswer": "C",
+              "isCorrect": true,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "19",
+              "question": "19. Muhammad Peter Davis",
+              "userAnswer": "D",
+              "correctAnswer": "D",
+              "isCorrect": true,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "20",
+              "question": "20. Arthur Rosenfeld",
+              "userAnswer": "G",
+              "correctAnswer": "G",
+              "isCorrect": true,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "21",
+              "question": "21. R van der Ley",
+              "userAnswer": "A",
+              "correctAnswer": "A",
+              "isCorrect": true,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "22",
+              "question": "22. Amory Lovins",
+              "userAnswer": "B",
+              "correctAnswer": "E",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "23",
+              "question": "23. The air temperature in modern Malaysian houses is lower than the air temperature outside.",
+              "userAnswer": "False",
+              "correctAnswer": "False",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "24",
+              "question": "24. The construction industry is more to blame than transport for global warming.",
+              "userAnswer": "Not Given",
+              "correctAnswer": "True",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q12",
+              "number": "25",
+              "question": "25. The use of wind towers for cooling is widespread in the Middle East today.",
+              "userAnswer": "False",
+              "correctAnswer": "False",
+              "isCorrect": true,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "26",
+              "question": "26. The 'super‑windows' promoted by Amory Lovins can be installed at low cost.",
+              "userAnswer": "False",
+              "correctAnswer": "Not Given",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q2",
+              "number": "15",
+              "question": "15. an example of a construction design which benefits domestic interaction",
+              "userAnswer": "A",
+              "correctAnswer": "E",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "16",
+              "question": "16. a description of a house that is ventilated from below",
+              "userAnswer": "E",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "17",
+              "question": "17. an example of self‑sufficient energy supply",
+              "userAnswer": "D",
+              "correctAnswer": "J",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "22",
+              "question": "22. Amory Lovins",
+              "userAnswer": "B",
+              "correctAnswer": "E",
+              "isCorrect": false,
+              "questionType": "short-answer",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "24",
+              "question": "24. The construction industry is more to blame than transport for global warming.",
+              "userAnswer": "Not Given",
+              "correctAnswer": "True",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "26",
+              "question": "26. The 'super‑windows' promoted by Amory Lovins can be installed at low cost.",
+              "userAnswer": "False",
+              "correctAnswer": "Not Given",
+              "isCorrect": false,
+              "questionType": "true-false-not-given",
+              "wrongReason": null
+            }
+          ]
+        },
+        {
+          "examId": "p3-medium-154",
+          "title": "Decisions, Decisions 决策之间",
+          "category": "P3",
+          "scoreInfo": {
+            "correct": 7,
+            "total": 14,
+            "accuracy": 0.5,
+            "percentage": 50,
+            "source": "unified_reading_page"
+          },
+          "passage": {
+            "title": "Decisions, decisions!",
+            "subtitle": "",
+            "paragraphs": [
+              {
+                "label": "",
+                "text": "A widely recognised legend tells us that in Gordium (in what is now Turkey) in the fourth century BC an oxcart was roped to a pole with a complex knot. It was said that the first person to untie it would become the king of Asia. Unfortunately, a the knot proved impossible to untie. The story continues that when confronted with this problem, rather than deliberating on how to untie the Gordian knot, Alexander, the famous ruler of the Greeks in the ancient world, simply took out his sword and cut it in two – then went on to conquer Asia. Ever since, the notion of a \"Gordian solution\" has referred to the attractiveness of a simple answer to an otherwise intractable problem."
+              },
+              {
+                "label": "",
+                "text": "Among researchers in the psychology of decision making, however, such solutions have traditionally held little appeal. In particular, the “conflict model” of decision making proposed by psychologists Irving Janis and Leon Mann in their 1977 book Decision Making argued that a complex decision-making process is essential for guarding individuals and groups from the peril of \"group-think”. Decisions made without thoroughly canvassing, surveying, weighing, examining and re-examining relevant information and options would be sub-optimal and often disastrous. One foreign-affairs decision made by a well-known US political leader in the 1960s is typically held up as an example of the perils of inadequate thought, whereas his successful handling of a later crisis is cited as an example of the advantages of careful deliberation. However, examination of these historical events by Peter Suedfield, a psychologist at the University of British Columbia, and Roderick Kramer, a psychologist at the Stanford Graduate School of Business, found little difference in the two decision-making processes; both crises required and received complex consideration by the political administration, but later only the second one was deemed to be effective."
+              },
+              {
+                "label": "",
+                "text": "In general, however, organisational and political science offer little evidence that complex decisions fare better than simpler ones. In fact, a growing body of work suggests that in many situations simple “snap” decisions will be routinely superior to more complex ones – an idea that gained widespread public appeal with Malcolm Gladwell's best-selling book Blink (2005)."
+              },
+              {
+                "label": "",
+                "text": "An article by Ap Dijksterhuis of the University of Amsterdam and his colleagues, “On Making the Right Choice: the Deliberation-without-attention Effect”, runs very much in the spirit of Gladwell's influential text. Its core argument is that to be effective, conscious (deliberative) decision making requires cognitive resources. Because increasingly complex decisions place increasing strain on those resources, the quality of our decisions declines as their complexity increases. In short, complex decisions overrun our cognitive powers. On the other hand, unconscious decision making (what the authors refer to as “deliberation without attention”) requires no cognitive resources, so task complexity does not degrade effectiveness. The seemingly counter-intuitive conclusion is that although conscious thought enhances simple decisions, the opposite holds true for more complex decisions."
+              },
+              {
+                "label": "",
+                "text": "Dijksterhuis reports four simple but elegant studies supporting this argument. In one, participants assessed the quality of four hypothetical cars by considering either four attributes (a simple task) or twelve attributes (a complex task). Among participants who considered four attributes, those who were allowed to engage in undistracted deliberative thought did better at discriminating between the best and worst cars. Those who were distracted and thus unable to deliberate had to rely on their unconscious thinking and did less well. The opposite pattern emerged when people considered twelve criteria. In this case, conscious deliberation led to inferior discrimination and poor decisions."
+              },
+              {
+                "label": "",
+                "text": "In another study, Dijksterhuis surveyed people shopping for clothes (“simple” products) and furniture (\"complex” products). Compared with those who said they had deliberated long and hard, shoppers who bought with little conscious deliberation felt less happy with their simple clothing purchases but happier with the complex furniture purchases. Deliberation without attention actually produced better results as the decisions became more complex."
+              },
+              {
+                "label": "",
+                "text": "From there, however, the researchers take a big leap. They write: There is no reason to assume that the deliberation-without-attention effect does not generalise to other types of choices – political, managerial or otherwise. In such cases, it should benefit the individual to think consciously about simple matters and to delegate thinking about more complicated matters to the unconscious."
+              },
+              {
+                "label": "",
+                "text": "This radical inference contradicts standard political and managerial theory but doubtless comforts those in politics and management who always find the simple solution to the complex problem an attractive proposition. Indeed, one suspects many of our political leaders already embrace this wisdom."
+              },
+              {
+                "label": "",
+                "text": "Still it is here, in the realms of society and its governance, that the more problematic implications of deliberation without attention begin to surface. Variables that can be neatly circumscribed in decisions about shopping lose clarity in a world of group dynamics, social interaction, history and politics. Two pertinent questions arise. First, what counts as a complex decision? And second, what counts as a good outcome?"
+              },
+              {
+                "label": "",
+                "text": "As social psychologist Kurt Lewin (1890-1947) noted, a “good” decision that nobody respects is actually bad. His classic studies of decision making showed that participating in deliberative processes makes people more likely to abide by the results. The issue here is that when political decision makers make mistakes, it is their politics, or the relation between their politics and our own, rather than psychology which is at fault."
+              },
+              {
+                "label": "",
+                "text": "Gladwell's book and Dijksterhuis's paper are invaluable in pointing out the limitations of the conventional wisdom that decision quality rises with decision-making complexity. But this work still tempts us to believe that decision making is simply a matter of psychology, rather than also a question of politics, ideology and group membership. Avoiding social considerations in a search for general appeal can take us away from enlightenment rather than toward it."
+              }
+            ]
+          },
+          "questionGroups": [
+            {
+              "groupId": "group-1",
+              "kind": "single_choice",
+              "title": "Questions 27–31",
+              "instructionsAndOptions": [
+                "Choose the correct letter, A, B, C or D.",
+                "27 The legend of the Gordian knot is used to illustrate the idea that",
+                "28 The 'conflict model' of decision making proposed by Janis and Mann requires that",
+                "29 According to recent thinking reinforced by Malcolm Gladwell, the best decisions",
+                "30 Dijksterhuis and his colleagues claim in their article that",
+                "31 Dijksterhuis's car study found that, in simple tasks, participants"
+              ],
+              "questionIds": [
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5"
+              ],
+              "questions": [
+                {
+                  "questionId": "q1",
+                  "number": "27",
+                  "text": "Question 27",
+                  "correctAnswer": "B"
+                },
+                {
+                  "questionId": "q2",
+                  "number": "28",
+                  "text": "Question 28",
+                  "correctAnswer": "B"
+                },
+                {
+                  "questionId": "q3",
+                  "number": "29",
+                  "text": "Question 29",
+                  "correctAnswer": "C"
+                },
+                {
+                  "questionId": "q4",
+                  "number": "30",
+                  "text": "Question 30",
+                  "correctAnswer": "B"
+                },
+                {
+                  "questionId": "q5",
+                  "number": "31",
+                  "text": "Question 31",
+                  "correctAnswer": "D"
+                }
+              ]
+            },
+            {
+              "groupId": "group-2",
+              "kind": "summary_completion",
+              "title": "Questions 32–35",
+              "instructionsAndOptions": [
+                "Complete the summary below using the list of words, A–I, below.",
+                "Using clothing and furniture as examples of different types of purchases, Dijksterhuis questioned shoppers on their satisfaction with what they had bought. People who spent time buying simple clothing items were more satisfied than those who had not. However, when buying furniture, shoppers made purchasing decisions if they didn't think too hard. From this, the researchers concluded that in other choices, perhaps more important than shopping, decisions are best made by the unconscious. The writer comments that Dijksterhuis's finding is apparently but nonetheless true."
+              ],
+              "questionIds": [
+                "q6",
+                "q7",
+                "q8",
+                "q9"
+              ],
+              "questions": [
+                {
+                  "questionId": "q6",
+                  "number": "32",
+                  "text": "Question 32",
+                  "correctAnswer": "A"
+                },
+                {
+                  "questionId": "q7",
+                  "number": "33",
+                  "text": "Question 33",
+                  "correctAnswer": "D"
+                },
+                {
+                  "questionId": "q8",
+                  "number": "34",
+                  "text": "Question 34",
+                  "correctAnswer": "G"
+                },
+                {
+                  "questionId": "q9",
+                  "number": "35",
+                  "text": "Question 35",
+                  "correctAnswer": "B"
+                }
+              ]
+            },
+            {
+              "groupId": "group-3",
+              "kind": "yes_no_not_given",
+              "title": "Questions 36–40",
+              "instructionsAndOptions": [
+                "Do the following statements agree with the views of the writer in Reading Passage 3?",
+                "In boxes 36–40 on your answer sheet, write",
+                "YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this",
+                "36 Dijksterhuis's findings agree with existing political and management theories.",
+                "37 Some political leaders seem to use deliberation without attention when making complex decisions.",
+                "38 All political decisions are complex ones.",
+                "39 We judge political errors according to our own political beliefs.",
+                "40 Social considerations must be taken into account for any examination of decision making to prove useful."
+              ],
+              "questionIds": [
+                "q10",
+                "q11",
+                "q12",
+                "q13",
+                "q14"
+              ],
+              "questions": [
+                {
+                  "questionId": "q10",
+                  "number": "36",
+                  "text": "Question 36",
+                  "correctAnswer": "NO"
+                },
+                {
+                  "questionId": "q11",
+                  "number": "37",
+                  "text": "Question 37",
+                  "correctAnswer": "YES"
+                },
+                {
+                  "questionId": "q12",
+                  "number": "38",
+                  "text": "Question 38",
+                  "correctAnswer": "NOT GIVEN"
+                },
+                {
+                  "questionId": "q13",
+                  "number": "39",
+                  "text": "Question 39",
+                  "correctAnswer": "YES"
+                },
+                {
+                  "questionId": "q14",
+                  "number": "40",
+                  "text": "Question 40",
+                  "correctAnswer": "YES"
+                }
+              ]
+            }
+          ],
+          "answers": [
+            {
+              "questionId": "q1",
+              "number": "27",
+              "question": "Question 27",
+              "userAnswer": "B",
+              "correctAnswer": "B",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q2",
+              "number": "28",
+              "question": "Question 28",
+              "userAnswer": "B",
+              "correctAnswer": "B",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q3",
+              "number": "29",
+              "question": "Question 29",
+              "userAnswer": "D",
+              "correctAnswer": "C",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q4",
+              "number": "30",
+              "question": "Question 30",
+              "userAnswer": "B",
+              "correctAnswer": "B",
+              "isCorrect": true,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "31",
+              "question": "Question 31",
+              "userAnswer": "C",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "32",
+              "question": "Question 32",
+              "userAnswer": "H less",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "33",
+              "question": "Question 33",
+              "userAnswer": "F obvious",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "34",
+              "question": "Question 34",
+              "userAnswer": "G complex",
+              "correctAnswer": "G",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "35",
+              "question": "Question 35",
+              "userAnswer": "B counterintuitive",
+              "correctAnswer": "B",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q10",
+              "number": "36",
+              "question": "Question 36",
+              "userAnswer": "NO",
+              "correctAnswer": "NO",
+              "isCorrect": true,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "37",
+              "question": "Question 37",
+              "userAnswer": "NO",
+              "correctAnswer": "YES",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q12",
+              "number": "38",
+              "question": "Question 38",
+              "userAnswer": "NOT GIVEN",
+              "correctAnswer": "NOT GIVEN",
+              "isCorrect": true,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q13",
+              "number": "39",
+              "question": "Question 39",
+              "userAnswer": "YES",
+              "correctAnswer": "YES",
+              "isCorrect": true,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q14",
+              "number": "40",
+              "question": "Question 40",
+              "userAnswer": "YES",
+              "correctAnswer": "YES",
+              "isCorrect": true,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            }
+          ],
+          "wrongQuestions": [
+            {
+              "questionId": "q3",
+              "number": "29",
+              "question": "Question 29",
+              "userAnswer": "D",
+              "correctAnswer": "C",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q5",
+              "number": "31",
+              "question": "Question 31",
+              "userAnswer": "C",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "multiple-choice",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q6",
+              "number": "32",
+              "question": "Question 32",
+              "userAnswer": "H less",
+              "correctAnswer": "A",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q7",
+              "number": "33",
+              "question": "Question 33",
+              "userAnswer": "F obvious",
+              "correctAnswer": "D",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q8",
+              "number": "34",
+              "question": "Question 34",
+              "userAnswer": "G complex",
+              "correctAnswer": "G",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q9",
+              "number": "35",
+              "question": "Question 35",
+              "userAnswer": "B counterintuitive",
+              "correctAnswer": "B",
+              "isCorrect": false,
+              "questionType": "summary-completion",
+              "wrongReason": null
+            },
+            {
+              "questionId": "q11",
+              "number": "37",
+              "question": "Question 37",
+              "userAnswer": "NO",
+              "correctAnswer": "YES",
+              "isCorrect": false,
+              "questionType": "yes-no-not-given",
+              "wrongReason": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

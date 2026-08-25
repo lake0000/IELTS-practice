@@ -4,6 +4,7 @@
     const MESSAGE_SOURCE = 'practice_page';
     const INIT_RETRY_MS = 1500;
     const SIMULATION_DRAFT_SYNC_MS = 1200;
+const READING_PAGE_ASSET_VERSION = '20260825-latest-suite-review-fix';
     const EXPLANATION_STYLE_ID = 'reading-explanation-style';
     const MEMORIZE_STYLE_ID = 'reading-memorize-style';
     const PRACTICE_TIMER_BRIDGE_KEY = '__IELTS_PRACTICE_TIMER__';
@@ -31,6 +32,8 @@
         { value: '答案格式错误', label: '答案格式错误' },
         { value: '粗心漏看', label: '粗心漏看' },
         { value: '时间不够', label: '时间不够' },
+        { value: '思路错误', label: '思路错误' },
+        { value: '单词不认识', label: '单词不认识' },
         { value: '其他', label: '其他' }
     ];
     const WRONG_REASON_LOG_PREFIX = '[WrongReasonSave]';
@@ -323,6 +326,7 @@
             && control.classList
             && (
                 control.classList.contains('wrong-reason-select')
+                || control.classList.contains('wrong-reason-category-checkbox')
                 || control.classList.contains('wrong-reason-note')
             )
         );
@@ -665,17 +669,11 @@
     function applySelectionHighlight(kind = 'highlight') {
         const toolbar = document.getElementById('selbar');
         const selection = global.getSelection();
-        if (!interaction.lastRange || interaction.lastRange.collapsed || interaction.currentHighlightNode) {
+        if (!interaction.lastRange || interaction.lastRange.collapsed) {
             return;
         }
-        const span = document.createElement('span');
-        span.className = 'hl';
-        if (kind === 'note') {
-            span.dataset.hlType = 'note';
-        }
-        try {
-            interaction.lastRange.surroundContents(span);
-        } catch (_) {
+        const level = kind === 'highlight' && interaction.currentHighlightNode ? 'secondary' : 'primary';
+        if (!wrapRangeWithHighlight(interaction.lastRange, kind, level)) {
             return;
         }
         selection?.removeAllRanges();
@@ -683,6 +681,42 @@
         interaction.lastRange = null;
         interaction.currentHighlightNode = null;
         syncSimulationDraftSnapshot('highlight');
+    }
+
+    function createHighlightSpan(kind = 'highlight', level = 'primary') {
+        const span = document.createElement('span');
+        span.className = 'hl';
+        if (kind === 'note') {
+            span.dataset.hlType = 'note';
+        }
+        if (level === 'secondary') {
+            span.dataset.hlLevel = 'secondary';
+        }
+        return span;
+    }
+
+    function wrapRangeWithHighlight(range, kind = 'highlight', level = 'primary') {
+        if (!range || range.collapsed) {
+            return false;
+        }
+        if (!String(range.toString() || '').trim()) {
+            return false;
+        }
+        const span = createHighlightSpan(kind, level);
+        try {
+            range.surroundContents(span);
+            return true;
+        } catch (_) {
+            try {
+                const fragment = range.extractContents();
+                span.appendChild(fragment);
+                range.insertNode(span);
+                span.parentElement?.normalize?.();
+                return true;
+            } catch (error) {
+                return false;
+            }
+        }
     }
 
     function removeSelectionHighlight() {
@@ -940,22 +974,61 @@
         dom.exitBtn = document.getElementById('exit-btn');
     }
 
+    function getAssetVersion() {
+        const globalVersion = String(global.APP_ASSET_VERSION || '').trim();
+        if (globalVersion) {
+            return globalVersion;
+        }
+        const bundleScript = Array.from(document.scripts || [])
+            .find((script) => /reading-page\.bundle\.js/.test(script.getAttribute('src') || ''));
+        const bundleSrc = bundleScript?.getAttribute('src') || '';
+        if (bundleSrc) {
+            try {
+                const version = new URL(bundleSrc, global.location.href).searchParams.get('v') || '';
+                if (version) {
+                    return version;
+                }
+            } catch (_) {}
+        }
+        if (READING_PAGE_ASSET_VERSION) {
+            return READING_PAGE_ASSET_VERSION;
+        }
+        try {
+            return new URL(global.location.href).searchParams.get('v') || '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function appendAssetVersion(url) {
+        const version = getAssetVersion();
+        if (!url || !version || /[?&]v=/.test(url)) {
+            return url;
+        }
+        const hashIndex = url.indexOf('#');
+        const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+        const hash = hashIndex >= 0 ? url.slice(hashIndex) : '';
+        const separator = base.includes('?') ? '&' : '?';
+        return `${base}${separator}v=${encodeURIComponent(version)}${hash}`;
+    }
+
     function loadScript(url) {
         if (!url) {
             return Promise.reject(new Error('reading_exam_script_missing'));
         }
-        if (scriptCache.has(url)) {
-            return scriptCache.get(url);
+        const scriptUrl = appendAssetVersion(url);
+        if (scriptCache.has(scriptUrl)) {
+            return scriptCache.get(scriptUrl);
         }
         const promise = new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = url;
+            script.src = scriptUrl;
             script.defer = true;
             script.onload = () => resolve(true);
-            script.onerror = () => reject(new Error(`reading_exam_script_failed:${url}`));
+            script.onerror = () => reject(new Error(`reading_exam_script_failed:${scriptUrl}`));
             document.head.appendChild(script);
         });
-        scriptCache.set(url, promise);
+        scriptCache.set(scriptUrl, promise);
         return promise;
     }
 
@@ -1540,7 +1613,8 @@
                 gap: 6px;
             }
             .wrong-reason-select,
-            .wrong-reason-note {
+            .wrong-reason-note,
+            .wrong-reason-category-list {
                 width: 100%;
                 box-sizing: border-box;
                 border: 1px solid rgba(148, 163, 184, 0.75);
@@ -1554,10 +1628,32 @@
                 min-height: 30px;
                 padding: 4px 8px;
             }
+            .wrong-reason-select[multiple] {
+                min-height: 120px;
+                padding: 6px 8px;
+            }
             .wrong-reason-note {
                 min-height: 54px;
                 padding: 6px 8px;
                 resize: vertical;
+            }
+            .wrong-reason-category-list {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                gap: 6px 10px;
+                padding: 8px;
+            }
+            .wrong-reason-option {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                color: #334155;
+            }
+            .wrong-reason-category-checkbox {
+                width: 14px;
+                height: 14px;
+                flex: 0 0 auto;
             }
             .wrong-reason-save {
                 justify-self: start;
@@ -1624,6 +1720,14 @@
             .reading-inline-wrong-reason .wrong-reason-controls {
                 max-width: 560px;
             }
+            .reading-question-explanation-row td,
+            .reading-answer-key-row td {
+                padding: 0;
+            }
+            .reading-question-explanation-row .reading-explanation-card,
+            .reading-answer-key-row .reading-answer-key-card {
+                margin: 8px 0;
+            }
             .reading-question-error-focus {
                 outline: 2px solid rgba(220, 38, 38, 0.75);
                 outline-offset: 4px;
@@ -1641,9 +1745,13 @@
                 color: #b91c1c;
             }
             body.dark-mode .wrong-reason-select,
-            body.dark-mode .wrong-reason-note {
+            body.dark-mode .wrong-reason-note,
+            body.dark-mode .wrong-reason-category-list {
                 border-color: rgba(71, 85, 105, 0.9);
                 background: #111827;
+                color: #e5e7eb;
+            }
+            body.dark-mode .wrong-reason-option {
                 color: #e5e7eb;
             }
             body.dark-mode .wrong-reason-save {
@@ -2612,6 +2720,27 @@
         return normalizeQuestionId(value) === normalizeQuestionId(target);
     }
 
+    const QUESTION_HOST_SELECTOR = [
+        '.diagram-input-item',
+        '.flowchart-item',
+        '.question-block',
+        '.flow-box',
+        '.summary-completion',
+        '.question',
+        '.question-row',
+        '.question-item',
+        '.match-question-item',
+        '.mc-question-item',
+        'li',
+        'tr',
+        'p',
+        '.unified-group'
+    ].join(',');
+
+    function getQuestionHostFromNode(node) {
+        return node?.closest?.(QUESTION_HOST_SELECTOR) || node || null;
+    }
+
     function findQuestionAnchor(questionId) {
         const escapedQuestionId = escapeSelector(questionId);
         const questionPane = dom.groups || document.getElementById('question-groups') || null;
@@ -2623,7 +2752,7 @@
             questionPane.querySelector(`.match-dropzone[data-question-id="${escapedQuestionId}"], .drop-target-summary[data-question-id="${escapedQuestionId}"]`)
         ].filter(Boolean) : [];
         if (scopedCandidates.length) {
-            return scopedCandidates[0].closest?.('.unified-group, .question, .question-row, .question-item, li, tr, p') || scopedCandidates[0];
+            return getQuestionHostFromNode(scopedCandidates[0]);
         }
         const directCandidates = [
             document.getElementById(`${questionId}-anchor`),
@@ -2631,7 +2760,7 @@
             document.querySelector(`[name="${questionId}"]`)
         ].filter(Boolean);
         if (directCandidates.length) {
-            return directCandidates[0];
+            return getQuestionHostFromNode(directCandidates[0]);
         }
 
         const groups = document.querySelectorAll('.unified-group[data-question-ids]');
@@ -2684,11 +2813,18 @@
         });
     }
 
+    function isAnswerReviewTarget(node) {
+        return !!(node && !isWrongReasonControl(node) && !node.closest?.('.wrong-reason-controls'));
+    }
+
     function markWrongAnswerChoice(entry = {}) {
         const questionId = entry.questionId || '';
         const controls = getAnswerControls(questionId);
         const userTokens = new Set(normalizeAnswerTokens(entry.userAnswer).map((item) => item.toLowerCase()));
         controls.forEach((control) => {
+            if (!isAnswerReviewTarget(control)) {
+                return;
+            }
             const tagName = String(control.tagName || '').toLowerCase();
             const type = String(control.type || '').toLowerCase();
             const value = String(control.value || control.dataset?.value || control.dataset?.option || '').trim();
@@ -2711,12 +2847,19 @@
 
     function findInlineWrongReasonHost(questionId) {
         const controls = getAnswerControls(questionId);
-        const first = controls[0] || findQuestionAnchor(questionId);
+        const escaped = escapeSelector(questionId);
+        const questionPane = dom.groups || document.getElementById('question-groups') || document;
+        const matchingExplanation = questionPane.querySelector?.(`.reading-question-explanation[data-question-id="${escaped}"], .reading-question-explanation-item[data-question-id="${escaped}"]`);
+        if (matchingExplanation) {
+            return matchingExplanation.closest?.('.reading-question-explanation-row') || matchingExplanation;
+        }
+        const anchor = findQuestionAnchor(questionId);
+        const first = controls[0] || anchor;
         if (!first) {
             return null;
         }
-        const questionHost = first.closest?.('tr, .match-question-item, .question-row, .question-item, li, p, .unified-group') || first;
-        const directExplanation = questionHost.querySelector?.('.reading-question-explanation:last-child, .reading-question-explanation-list:last-child');
+        const questionHost = getQuestionHostFromNode(first);
+        const directExplanation = questionHost.querySelector?.(`.reading-question-explanation[data-question-id="${escaped}"], .reading-question-explanation-item[data-question-id="${escaped}"]`);
         if (directExplanation) {
             return directExplanation;
         }
@@ -2724,15 +2867,28 @@
     }
 
     function syncWrongReasonControls(questionId, reason, sourceContainer = null) {
-        const normalized = normalizeWrongReason(reason) || { category: '', note: '' };
+        const normalized = normalizeWrongReason(reason) || { category: '', categories: [], note: '' };
+        const selectedCategories = new Set(normalized.categories || []);
         getWrongReasonControlContainers(questionId).forEach((container) => {
             if (container === sourceContainer) {
                 return;
             }
             const select = container.querySelector('.wrong-reason-select');
+            const checkboxes = Array.from(container.querySelectorAll('.wrong-reason-category-checkbox'));
             const note = container.querySelector('.wrong-reason-note');
+            if (checkboxes.length > 0) {
+                checkboxes.forEach((checkbox) => {
+                    checkbox.checked = Boolean(checkbox.value && selectedCategories.has(checkbox.value));
+                });
+            }
             if (select) {
-                select.value = normalized.category || '';
+                if (select.multiple) {
+                    Array.from(select.options || []).forEach((option) => {
+                        option.selected = Boolean(option.value && selectedCategories.has(option.value));
+                    });
+                } else {
+                    select.value = normalized.category || '';
+                }
             }
             if (note) {
                 note.value = normalized.note || '';
@@ -2750,13 +2906,18 @@
         if (!root || !root.querySelectorAll) {
             return;
         }
-        root.querySelectorAll('.wrong-reason-select, .wrong-reason-note').forEach((control) => {
+        root.querySelectorAll('.wrong-reason-select, .wrong-reason-category-checkbox, .wrong-reason-note').forEach((control) => {
             if (control.dataset.wrongReasonBound === '1') {
                 return;
             }
             control.dataset.wrongReasonBound = '1';
             control.addEventListener('change', handleWrongReasonInput);
             control.addEventListener('input', handleWrongReasonInput);
+            if (control.classList.contains('wrong-reason-note')) {
+                control.addEventListener('keydown', (event) => {
+                    event.stopPropagation();
+                });
+            }
         });
         root.querySelectorAll('.wrong-reason-save').forEach((button) => {
             if (button.dataset.wrongReasonBound === '1') {
@@ -2765,6 +2926,44 @@
             button.dataset.wrongReasonBound = '1';
             button.addEventListener('click', handleWrongReasonSave);
         });
+    }
+
+    function getTableWideColumnCount(row) {
+        const table = row?.closest?.('table');
+        if (!table) {
+            return Math.max(1, row?.children?.length || 1);
+        }
+        const headerCount = table.querySelectorAll?.('thead tr:first-child th')?.length || 0;
+        return Math.max(1, headerCount || row?.children?.length || 1);
+    }
+
+    function insertTableWideRowAfter(hostRow, className, questionId, content) {
+        if (!hostRow || !hostRow.parentNode) {
+            return null;
+        }
+        const row = document.createElement('tr');
+        row.className = className;
+        row.dataset.questionId = questionId || '';
+        const cell = document.createElement('td');
+        cell.colSpan = getTableWideColumnCount(hostRow);
+        if (typeof content === 'string') {
+            cell.innerHTML = content;
+        } else if (content) {
+            cell.appendChild(content);
+        }
+        row.appendChild(cell);
+        hostRow.parentNode.insertBefore(row, hostRow.nextSibling);
+        return row;
+    }
+
+    function isInlineWrongReasonPanel(node) {
+        if (!node) {
+            return false;
+        }
+        if (node.classList?.contains?.('reading-inline-wrong-reason')) {
+            return true;
+        }
+        return String(node.className || '').split(/\s+/).includes('reading-inline-wrong-reason');
     }
 
     function insertInlineWrongReasonControls(entry = {}) {
@@ -2779,16 +2978,7 @@
         const controlsHtml = buildWrongReasonControls(entry);
         const tagName = String(host.tagName || '').toLowerCase();
         if (tagName === 'tr') {
-            const table = host.closest('table');
-            const columnCount = Math.max(1, table ? (table.querySelectorAll('thead tr:first-child th').length || host.children.length || 1) : 1);
-            const row = document.createElement('tr');
-            row.className = 'reading-inline-wrong-reason-row';
-            row.dataset.questionId = questionId;
-            const cell = document.createElement('td');
-            cell.colSpan = columnCount;
-            cell.innerHTML = controlsHtml;
-            row.appendChild(cell);
-            host.parentNode.insertBefore(row, host.nextSibling);
+            const row = insertTableWideRowAfter(host, 'reading-inline-wrong-reason-row', questionId, controlsHtml);
             attachWrongReasonControlEvents(row);
             return;
         }
@@ -2796,7 +2986,11 @@
         panel.className = 'reading-inline-wrong-reason';
         panel.dataset.questionId = questionId;
         panel.innerHTML = controlsHtml;
-        host.insertAdjacentElement('afterend', panel);
+        let insertAfter = host;
+        while (isInlineWrongReasonPanel(insertAfter?.nextElementSibling)) {
+            insertAfter = insertAfter.nextElementSibling;
+        }
+        insertAfter.insertAdjacentElement('afterend', panel);
         attachWrongReasonControlEvents(panel);
     }
 
@@ -2834,6 +3028,9 @@
             `.drop-target-summary[data-question-id="${escaped}"]`
         ].join(',');
         document.querySelectorAll(answerTargets).forEach((node) => {
+            if (!isAnswerReviewTarget(node)) {
+                return;
+            }
             node.classList.add('reading-answer-error-focus');
         });
     }
@@ -2995,17 +3192,271 @@
         });
     }
 
-    function resolvePassageTargets() {
+    function normalizePassageLabelText(value) {
+        return String(value == null ? '' : value)
+            .replace(/\u00a0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function parsePassageLabelKey(value) {
+        const label = normalizePassageLabelText(value);
+        if (!label) {
+            return null;
+        }
+        const directLetter = label.match(/^([A-Z])$/i);
+        if (directLetter) {
+            return { type: 'letter', key: directLetter[1].toUpperCase() };
+        }
+        const paragraphLetter = label.match(/(?:paragraph|段落)\s*([A-Z])\b/i);
+        if (paragraphLetter) {
+            return { type: 'letter', key: paragraphLetter[1].toUpperCase() };
+        }
+        const sectionLetter = label.match(/(?:section|部分|章节)\s*([A-Z])\b/i);
+        if (sectionLetter) {
+            return { type: 'letter', key: sectionLetter[1].toUpperCase() };
+        }
+        const directNumber = label.match(/^(\d+)$/);
+        if (directNumber) {
+            return { type: 'number', key: Number(directNumber[1]) };
+        }
+        const paragraphNumber = label.match(/(?:paragraph\s*|第\s*)?(\d+)\s*(?:段|$)/i);
+        if (paragraphNumber) {
+            return { type: 'number', key: Number(paragraphNumber[1]) };
+        }
+        return null;
+    }
+
+    function getPassageNoteKey(note) {
+        return parsePassageLabelKey(note?.label || '');
+    }
+
+    function isExplanationNode(node) {
+        return Boolean(node?.matches?.(EXPLANATION_NODE_SELECTOR));
+    }
+
+    function isIgnorablePassageParagraph(node) {
+        const text = normalizePassageLabelText(node?.textContent || '');
+        return !text || /you should spend about/i.test(text);
+    }
+
+    function isIntroLikePassageParagraph(node) {
+        if (!node) {
+            return false;
+        }
+        const text = normalizePassageLabelText(node.textContent || '');
+        if (!text) {
+            return true;
+        }
+        if (/you should spend about/i.test(text)) {
+            return true;
+        }
+        const emphasized = normalizePassageLabelText(node.querySelector?.('em, i')?.textContent || '');
+        return Boolean(emphasized && emphasized === text);
+    }
+
+    function getPassageParagraphCandidates() {
         if (!dom.left) return [];
-        const wrapped = Array.from(dom.left.querySelectorAll('.paragraph-wrapper > p'));
+        return Array.from(dom.left.querySelectorAll('p')).filter((node) => {
+            if (isExplanationNode(node)) {
+                return false;
+            }
+            return !isIgnorablePassageParagraph(node);
+        });
+    }
+
+    function getTargetAfterStandaloneLabel(label) {
+        let node = label.nextSibling;
+        let target = label;
+        while (node) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                const element = node;
+                if (element.matches?.('.paragraph-label')) {
+                    break;
+                }
+                const text = normalizePassageLabelText(element.textContent || '');
+                if (text && !isExplanationNode(element)) {
+                    target = element;
+                }
+            }
+            node = node.nextSibling;
+        }
+        return target;
+    }
+
+    function getLastContentElement(container) {
+        if (!container) {
+            return null;
+        }
+        const candidates = Array.from(container.querySelectorAll?.('p, div') || []).filter((node) => {
+            if (isExplanationNode(node) || node.closest?.(EXPLANATION_NODE_SELECTOR)) {
+                return false;
+            }
+            if (node.matches?.('.paragraph-label')) {
+                return false;
+            }
+            const text = normalizePassageLabelText(node.textContent || '');
+            if (!text || isIgnorablePassageParagraph(node)) {
+                return false;
+            }
+            if (node.querySelector?.('.paragraph-label') && !node.matches?.('p')) {
+                return false;
+            }
+            return true;
+        });
+        return candidates[candidates.length - 1] || container;
+    }
+
+    function resolveParagraphWrapperTargets(noteKeys) {
+        const wrappers = Array.from(dom.left.querySelectorAll('.paragraph-wrapper'));
+        if (!wrappers.length || !noteKeys.length || !noteKeys.every((key) => key.type === 'letter')) {
+            return [];
+        }
+        const targetsByKey = new Map();
+        wrappers.forEach((wrapper) => {
+            const labelText = wrapper.querySelector?.('.paragraph-label')?.textContent || '';
+            let key = parsePassageLabelKey(labelText);
+            if (!key) {
+                const firstStrong = Array.from(wrapper.querySelectorAll?.('p > strong:first-child, p > b:first-child') || [])[0];
+                key = parsePassageLabelKey(firstStrong?.textContent || '');
+            }
+            if (key?.type === 'letter' && !targetsByKey.has(key.key)) {
+                targetsByKey.set(key.key, getLastContentElement(wrapper));
+            }
+        });
+        if (noteKeys.every((key) => targetsByKey.has(key.key))) {
+            return noteKeys.map((key) => targetsByKey.get(key.key));
+        }
+        return [];
+    }
+
+    function resolveStandaloneLabelTargets(noteKeys) {
+        const labels = Array.from(dom.left.querySelectorAll('.paragraph-label'));
+        if (!labels.length) {
+            return [];
+        }
+        const targetsByKey = new Map();
+        labels.forEach((label) => {
+            const key = parsePassageLabelKey(label.textContent || '');
+            if (!key || key.type !== 'letter') {
+                return;
+            }
+            targetsByKey.set(key.key, getTargetAfterStandaloneLabel(label));
+        });
+        if (noteKeys.length && noteKeys.every((key) => key.type === 'letter' && targetsByKey.has(key.key))) {
+            return noteKeys.map((key) => targetsByKey.get(key.key));
+        }
+        if (noteKeys.length && noteKeys.some((key) => key.type === 'letter')) {
+            return [];
+        }
+        return labels.map(getTargetAfterStandaloneLabel).filter(Boolean);
+    }
+
+    function resolveInlineLetterTargets(noteKeys) {
+        if (!noteKeys.length || !noteKeys.every((key) => key.type === 'letter')) {
+            return [];
+        }
+        const targetsByKey = new Map();
+        const candidates = Array.from(dom.left.querySelectorAll('p, div')).filter((node) => {
+            if (isExplanationNode(node) || node.closest?.(EXPLANATION_NODE_SELECTOR)) {
+                return false;
+            }
+            return normalizePassageLabelText(node.textContent || '').length > 0;
+        });
+        candidates.forEach((node) => {
+            const firstLabel = Array.from(node.children || [])
+                .find((child) => /^(STRONG|B)$/i.test(child.tagName || ''));
+            const key = parsePassageLabelKey(firstLabel?.textContent || '');
+            if (key?.type === 'letter' && !targetsByKey.has(key.key)) {
+                targetsByKey.set(key.key, node);
+            }
+        });
+        if (noteKeys.every((key) => targetsByKey.has(key.key))) {
+            return noteKeys.map((key) => targetsByKey.get(key.key));
+        }
+        return [];
+    }
+
+    function resolveNumberedParagraphTargets(noteKeys) {
+        if (!noteKeys.length || !noteKeys.every((key) => key.type === 'number')) {
+            return [];
+        }
+        const maxNumber = Math.max(...noteKeys.map((key) => key.key));
+        const paragraphs = getPassageParagraphCandidates();
+        while (paragraphs.length > maxNumber && isIntroLikePassageParagraph(paragraphs[0])) {
+            paragraphs.shift();
+        }
+        if (paragraphs.length < maxNumber) {
+            return [];
+        }
+        return noteKeys.map((key) => paragraphs[key.key - 1]).filter(Boolean);
+    }
+
+    function resolveSequentialPassageTargets(notes) {
+        const wrapped = Array.from(dom.left.querySelectorAll('.paragraph-wrapper > p'))
+            .filter((node) => !isExplanationNode(node) && !isIgnorablePassageParagraph(node));
         if (wrapped.length) {
             return wrapped;
         }
-        const paragraphs = Array.from(dom.left.querySelectorAll('p')).filter((node) => {
-            const text = (node.textContent || '').trim();
-            return text.length > 0 && !/you should spend about/i.test(text);
-        });
+        const paragraphs = getPassageParagraphCandidates();
+        const targetCount = Array.isArray(notes) ? notes.length : 0;
+        while (targetCount && paragraphs.length > targetCount && isIntroLikePassageParagraph(paragraphs[0])) {
+            paragraphs.shift();
+        }
         return paragraphs;
+    }
+
+    function resolvePassageTargets(notes = []) {
+        if (!dom.left) return [];
+        const noteKeys = notes.map(getPassageNoteKey).filter(Boolean);
+        const hasStructuredNoteLabels = notes.length > 0 && noteKeys.length === notes.length;
+        const wrapperTargets = resolveParagraphWrapperTargets(noteKeys);
+        if (wrapperTargets.length) {
+            return wrapperTargets;
+        }
+        const standaloneTargets = resolveStandaloneLabelTargets(noteKeys);
+        if (standaloneTargets.length) {
+            return standaloneTargets;
+        }
+        const inlineLetterTargets = resolveInlineLetterTargets(noteKeys);
+        if (inlineLetterTargets.length) {
+            return inlineLetterTargets;
+        }
+        const numberedTargets = resolveNumberedParagraphTargets(noteKeys);
+        if (numberedTargets.length) {
+            return numberedTargets;
+        }
+        if (hasStructuredNoteLabels) {
+            return [];
+        }
+        const sequentialTargets = resolveSequentialPassageTargets(notes);
+        if (notes.length && sequentialTargets.length !== notes.length) {
+            return [];
+        }
+        return sequentialTargets;
+    }
+
+    function renderPassageExplanationSummary(notes = []) {
+        if (!dom.left || !notes.length) {
+            return;
+        }
+        const text = notes.map((note, index) => {
+            const label = String(note?.label || `段落 ${index + 1}`).trim();
+            const body = String(note?.text || '').trim();
+            return label && body ? `${label}\n${body}` : body || label;
+        }).filter(Boolean).join('\n\n');
+        if (!text) {
+            return;
+        }
+        ensureExplanationStyles();
+        const card = createExplanationCard('原文翻译', text, 'reading-passage-explanation reading-passage-explanation-summary');
+        const title = Array.from(dom.left.querySelectorAll('h2, h3, h4'))
+            .find((node) => normalizePassageLabelText(node.textContent || ''));
+        if (title) {
+            title.insertAdjacentElement('afterend', card);
+            return;
+        }
+        dom.left.insertAdjacentElement('afterbegin', card);
     }
 
     function renderPassageExplanations() {
@@ -3013,12 +3464,17 @@
         if (!notes.length) {
             return;
         }
-        const targets = resolvePassageTargets();
+        const targets = resolvePassageTargets(notes);
         if (!targets.length) {
+            renderPassageExplanationSummary(notes);
             return;
         }
         ensureExplanationStyles();
         const size = Math.min(notes.length, targets.length);
+        if (size !== notes.length) {
+            renderPassageExplanationSummary(notes);
+            return;
+        }
         for (let index = 0; index < size; index += 1) {
             const note = notes[index];
             const target = targets[index];
@@ -3030,7 +3486,7 @@
     }
 
     function locateQuestionContainer(groupEl, questionId) {
-        const itemContainerSelector = '.question-item, .tfng-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .question-group, tr, li';
+        const itemContainerSelector = '.flow-box, .question-item, .tfng-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .question-group, tr, li';
         const escaped = escapeSelector(questionId);
         const directByAnchor = groupEl.querySelector(`#${escaped}-anchor`);
         if (directByAnchor) {
@@ -3043,12 +3499,12 @@
         }
         const byData = groupEl.querySelector(`[data-question="${escaped}"]`);
         if (byData) {
-            return byData.closest('.question-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .paragraph-wrapper, .question-group, tr, li')
+            return byData.closest('.flow-box, .question-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .paragraph-wrapper, .question-group, tr, li')
                 || byData.parentElement;
         }
         const directByTarget = groupEl.querySelector(`#${escaped}-target`);
         if (directByTarget) {
-            return directByTarget.closest('.question-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .question-group, p, li')
+            return directByTarget.closest('.flow-box, .question-item, .match-question-item, .mc-question-item, .question-row, .summary-completion, .question-group, p, li')
                 || directByTarget.parentElement;
         }
         const displayNumber = Number(questionNumberFromId(questionId));
@@ -3095,7 +3551,12 @@
             const container = locateQuestionContainer(groupEl, questionId);
             if (container) {
                 const card = createExplanationCard(`Q${number} 讲解`, text, 'reading-question-explanation');
-                container.appendChild(card);
+                card.dataset.questionId = questionId;
+                if (String(container.tagName || '').toLowerCase() === 'tr') {
+                    insertTableWideRowAfter(container, 'reading-question-explanation-row', questionId, card);
+                } else {
+                    container.appendChild(card);
+                }
             } else {
                 fallback.push({ number, text });
             }
@@ -3111,6 +3572,7 @@
         wrapper.appendChild(heading);
         fallback.forEach(({ number, text }) => {
             const item = createExplanationCard(`Q${number}`, text, 'reading-question-explanation-item');
+            item.dataset.questionId = `q${number}`;
             wrapper.appendChild(item);
         });
         groupEl.appendChild(wrapper);
@@ -3212,7 +3674,12 @@
             if (container.querySelector(`.reading-answer-key-card[data-question-id="${escapeSelector(questionId)}"]`)) {
                 return;
             }
-            container.appendChild(createAnswerKeyCard(questionId, answerKey[questionId]));
+            const card = createAnswerKeyCard(questionId, answerKey[questionId]);
+            if (String(container.tagName || '').toLowerCase() === 'tr') {
+                insertTableWideRowAfter(container, 'reading-answer-key-row', questionId, card);
+            } else {
+                container.appendChild(card);
+            }
         });
     }
 
@@ -3976,6 +4443,25 @@
         return cleaned;
     }
 
+    function extractLeadingOptionLabel(value) {
+        const core = getAnswerMatchCore();
+        if (core && typeof core.extractLeadingOptionLabel === 'function') {
+            return core.extractLeadingOptionLabel(value);
+        }
+        const cleaned = String(value == null ? '' : value)
+            .replace(/[“”]/g, '"')
+            .replace(/[‘’]/g, "'")
+            .replace(/[‐‑‒–—]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[\s"'`()[\]{}<>.,;:!?]+|[\s"'`()[\]{}<>.,;:!?]+$/g, '');
+        if (/^[A-Z](?:\s+[A-Z])+$/.test(cleaned)) {
+            return '';
+        }
+        const match = cleaned.match(/^([A-Z])(?:[.)]|\s+)\S+/);
+        return match ? match[1] : '';
+    }
+
     function compareAnswers(userAnswer, correctAnswer) {
         const core = getAnswerMatchCore();
         const normalizedUserAnswer = normalizeAnswerForCompare(userAnswer);
@@ -3996,6 +4482,12 @@
         }
         if (!actualTokens.length || !expectedTokens.length) {
             return false;
+        }
+        if (expectedTokens.length === 1 && /^[A-Z]$/.test(expectedTokens[0])) {
+            const actualLeadingOption = extractLeadingOptionLabel(normalizedUserAnswer);
+            if (actualLeadingOption) {
+                return actualLeadingOption === expectedTokens[0];
+            }
         }
         const tokenEquivalent = (left, right) => {
             if (left === right) {
@@ -4244,17 +4736,54 @@
         return buildResultsFromAnswers(state.dataset, collectAnswers());
     }
 
+    function addWrongReasonCategory(categories, value) {
+        String(value || '')
+            .split(/[、,，;；|/]+/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .forEach((item) => {
+                if (!categories.includes(item)) {
+                    categories.push(item);
+                }
+            });
+    }
+
+    function normalizeWrongReasonCategories(value) {
+        const source = value && typeof value === 'object'
+            ? value
+            : { category: value };
+        const categories = [];
+        if (Array.isArray(source.categories)) {
+            source.categories.forEach((item) => addWrongReasonCategory(categories, item));
+        }
+        addWrongReasonCategory(categories, source.category);
+        addWrongReasonCategory(categories, source.reason);
+        addWrongReasonCategory(categories, source.type);
+        return categories;
+    }
+
+    function wrongReasonCategoriesEqual(left, right) {
+        const leftCategories = normalizeWrongReasonCategories(left);
+        const rightCategories = normalizeWrongReasonCategories(right);
+        if (leftCategories.length !== rightCategories.length) {
+            return false;
+        }
+        return leftCategories.every((category) => rightCategories.includes(category));
+    }
+
     function normalizeWrongReason(value) {
         const source = value && typeof value === 'object'
             ? value
             : { category: value };
-        const category = String(source.category || source.reason || source.type || '').trim();
+        const categories = normalizeWrongReasonCategories(source);
+        const category = categories[0] || '';
         const note = String(source.note || source.detail || source.text || '').trim();
         if (!category && !note) {
             return null;
         }
         return {
             category,
+            categories,
             note,
             updatedAt: source.updatedAt || new Date().toISOString()
         };
@@ -4475,7 +5004,7 @@
             const normalizedPersisted = normalizeWrongReason(persisted[questionId]);
             return Boolean(
                 normalizedPersisted
-                && normalizedPersisted.category === normalizedExpected.category
+                && wrongReasonCategoriesEqual(normalizedPersisted, normalizedExpected)
                 && normalizedPersisted.note === normalizedExpected.note
             );
         });
@@ -5213,21 +5742,47 @@
         }
         const reason = getWrongReasonForEntry(entry) || {};
         const questionId = escapeHtml(String(entry.questionId || ''));
-        const selectedCategory = String(reason.category || '');
+        const selectedCategories = new Set(normalizeWrongReasonCategories(reason));
         const note = escapeHtml(String(reason.note || ''));
-        const options = WRONG_REASON_OPTIONS.map((option) => {
-            const selected = option.value === selectedCategory ? ' selected' : '';
-            return `<option value="${escapeHtml(option.value)}"${selected}>${escapeHtml(option.label)}</option>`;
+        const options = WRONG_REASON_OPTIONS.filter((option) => option.value).map((option) => {
+            const checked = selectedCategories.has(option.value) ? ' checked' : '';
+            const value = escapeHtml(option.value);
+            return `
+                    <label class="wrong-reason-option">
+                        <input class="wrong-reason-category-checkbox" data-question-id="${questionId}" type="checkbox" value="${value}"${checked}>
+                        <span>${escapeHtml(option.label)}</span>
+                    </label>
+                `;
         }).join('');
         return `
             <div class="wrong-reason-controls" data-question-id="${questionId}">
-                <select class="wrong-reason-select" data-question-id="${questionId}" aria-label="错因分类">
+                <div class="wrong-reason-category-list" role="group" aria-label="错因分类，可多选">
                     ${options}
-                </select>
+                </div>
                 <textarea class="wrong-reason-note" data-question-id="${questionId}" rows="2" placeholder="补充错因">${note}</textarea>
                 <button class="wrong-reason-save" data-question-id="${questionId}" type="button">保存</button>
             </div>
         `;
+    }
+
+    function readWrongReasonCategoriesFromContainer(container) {
+        const checkboxes = Array.from(container?.querySelectorAll?.('.wrong-reason-category-checkbox') || []);
+        if (checkboxes.length > 0) {
+            return checkboxes
+                .filter((checkbox) => checkbox.checked)
+                .map((checkbox) => String(checkbox.value || '').trim())
+                .filter(Boolean);
+        }
+        const select = container?.querySelector('.wrong-reason-select');
+        if (!select) {
+            return [];
+        }
+        if (select.multiple) {
+            return Array.from(select.selectedOptions || [])
+                .map((option) => String(option.value || '').trim())
+                .filter(Boolean);
+        }
+        return select.value ? [String(select.value).trim()] : [];
     }
 
     function handleWrongReasonInput(event) {
@@ -5235,15 +5790,20 @@
         if (!target || !target.classList) {
             return;
         }
-        if (!target.classList.contains('wrong-reason-select') && !target.classList.contains('wrong-reason-note')) {
+        if (
+            !target.classList.contains('wrong-reason-select')
+            && !target.classList.contains('wrong-reason-category-checkbox')
+            && !target.classList.contains('wrong-reason-note')
+        ) {
             return;
         }
         const questionId = target.dataset.questionId;
         const container = target.closest('.wrong-reason-controls');
-        const category = container?.querySelector('.wrong-reason-select')?.value || '';
+        const categories = readWrongReasonCategoriesFromContainer(container);
+        const category = categories[0] || '';
         const note = container?.querySelector('.wrong-reason-note')?.value || '';
-        updateWrongReasonInResults(questionId, { category, note });
-        syncWrongReasonControls(questionId, { category, note }, container);
+        updateWrongReasonInResults(questionId, { category, categories, note });
+        syncWrongReasonControls(questionId, { category, categories, note }, container);
         setWrongReasonSaveButtons(questionId, 'draft');
     }
 
@@ -5254,10 +5814,11 @@
         }
         const container = button.closest('.wrong-reason-controls');
         const questionId = button.dataset.questionId || container?.dataset.questionId || '';
-        const category = container?.querySelector('.wrong-reason-select')?.value || '';
+        const categories = readWrongReasonCategoriesFromContainer(container);
+        const category = categories[0] || '';
         const note = container?.querySelector('.wrong-reason-note')?.value || '';
-        updateWrongReasonInResults(questionId, { category, note });
-        syncWrongReasonControls(questionId, { category, note }, container);
+        updateWrongReasonInResults(questionId, { category, categories, note });
+        syncWrongReasonControls(questionId, { category, categories, note }, container);
         setWrongReasonSaveButtons(questionId, 'saving');
         Promise.resolve(syncWrongReasonsNow()).then((saved) => {
             setWrongReasonSaveButtons(questionId, saved ? 'saved' : 'failed');
@@ -5498,8 +6059,8 @@
                 : (Object.prototype.hasOwnProperty.call(normalizedAnswers, questionId) ? normalizedAnswers[questionId] : '');
             const hasCanonicalCorrectAnswer = Object.prototype.hasOwnProperty.call(normalizedCorrectAnswers, questionId);
             const correctAnswer = hasCanonicalCorrectAnswer ? normalizedCorrectAnswers[questionId] : '';
-            const fromDetail = Object.prototype.hasOwnProperty.call(rawDetailComparison, questionId);
-            let isCorrect = fromDetail && typeof comparisonEntry.isCorrect === 'boolean'
+            const hasSavedJudgement = typeof comparisonEntry.isCorrect === 'boolean';
+            let isCorrect = hasSavedJudgement
                 ? comparisonEntry.isCorrect
                 : (hasCanonicalCorrectAnswer ? compareAnswers(userAnswer, correctAnswer) : null);
             if (isCorrect) {
@@ -5697,6 +6258,15 @@
                 updateWrongReasonInResults,
                 syncWrongReasonsNow,
                 renderInlineWrongReasonControls,
+                resolvePassageTargetsForTest(left, notes = []) {
+                    const previousLeft = dom.left;
+                    dom.left = left || null;
+                    try {
+                        return resolvePassageTargets(notes);
+                    } finally {
+                        dom.left = previousLeft;
+                    }
+                },
                 markWrongAnswerChoice,
                 insertInlineWrongReasonControls,
                 hasPendingWrongReasonSaves,
@@ -5741,6 +6311,9 @@
                         sessionReadySent: state.sessionReadySent,
                         lastInitSignature: state.lastInitSignature,
                         activeExamId: state.suite?.activeExamId || null,
+                        lastResults: state.lastResults && typeof state.lastResults === 'object'
+                            ? JSON.parse(JSON.stringify(state.lastResults))
+                            : state.lastResults,
                         currentIndex: state.suite?.currentIndex || 0,
                         suiteInline: Boolean(state.suite?.inline),
                         suiteTimerLimitSeconds: state.suiteTimerLimitSeconds,
@@ -6218,6 +6791,66 @@
             }
         }
         return false;
+    }
+
+    function ensureStandalonePracticeSessionId() {
+        if (state.sessionId) {
+            return state.sessionId;
+        }
+        const examId = String(state.dataKey || state.examId || 'reading').trim() || 'reading';
+        state.sessionId = `${examId}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        return state.sessionId;
+    }
+
+    async function saveStandalonePracticeCompletion(payload = {}) {
+        if (
+            state.simulationMode
+            || state.suite?.inline
+            || state.suiteReviewMode
+            || state.reviewMode
+            || payload.suiteSubmission
+        ) {
+            return false;
+        }
+        const api = global.PracticeRecordAPI;
+        if (!api || typeof api.saveCompletion !== 'function') {
+            console.warn('[PracticeRecord] standalone completion save skipped: PracticeRecordAPI unavailable');
+            return false;
+        }
+        const examId = String(state.examId || state.dataKey || payload.metadata?.examId || '').trim();
+        const title = state.dataset?.meta?.title || payload.metadata?.examTitle || payload.metadata?.title || document.title || '';
+        const examEntry = {
+            id: examId,
+            title,
+            category: state.dataset?.meta?.category || payload.metadata?.category || '',
+            frequency: state.dataset?.meta?.frequency || payload.metadata?.frequency || 'unknown',
+            type: 'reading'
+        };
+        const context = {
+            examId,
+            dataKey: state.dataKey || examId,
+            sessionId: payload.sessionId || state.sessionId || ensureStandalonePracticeSessionId(),
+            metadata: payload.metadata || {},
+            answers: payload.answers || {},
+            correctAnswerMap: state.dataset?.answerKey || payload.correctAnswers || {},
+            highlights: Array.isArray(payload.highlights) ? payload.highlights : [],
+            noteText: typeof payload.noteText === 'string' ? payload.noteText : '',
+            scrollY: Number.isFinite(Number(payload.scrollY)) ? Number(payload.scrollY) : 0
+        };
+        try {
+            const savedRecord = await api.saveCompletion(payload, context, examEntry, {
+                updateStats: true
+            });
+            console.info('[PracticeRecord] standalone completion saved', {
+                recordId: savedRecord?.id || null,
+                examId,
+                sessionId: context.sessionId
+            });
+            return true;
+        } catch (error) {
+            console.warn('[PracticeRecord] standalone completion save failed', error);
+            return false;
+        }
     }
 
     function stopInitLoop() {
@@ -6862,7 +7495,11 @@
         enterSubmittedReadOnlyState(state.simulationMode ? 'simulation-final-submit' : 'final-submit');
         const messageType = state.simulationMode ? 'SIMULATION_SUBMIT' : 'PRACTICE_COMPLETE';
         const timing = resolvePracticeTiming(1, submissionSnapshot.timerSnapshot);
-        postMessage(messageType, Object.assign({
+        const completionSessionId = state.sessionId || (!state.simulationMode && !state.suite?.inline ? ensureStandalonePracticeSessionId() : null);
+        const completionPayload = Object.assign({
+            sessionId: completionSessionId,
+            examId: state.examId,
+            dataKey: state.dataKey,
             duration: timing.duration,
             startTime: new Date(timing.startTimeMs).toISOString(),
             endTime: new Date(timing.endTimeMs).toISOString(),
@@ -6891,7 +7528,11 @@
         }, state.suite?.inline ? {
             suiteSubmission: true,
             suiteEntries: Array.isArray(submissionSnapshot.suiteEntries) ? submissionSnapshot.suiteEntries : []
-        } : {}, postedResults));
+        } : {}, postedResults);
+        const delivered = postMessage(messageType, completionPayload);
+        if (!delivered && !state.simulationMode) {
+            await saveStandalonePracticeCompletion(completionPayload);
+        }
         await renderExplanations();
         renderInlineWrongReasonControls(results);
         applyHighlights(highlightSnapshot);

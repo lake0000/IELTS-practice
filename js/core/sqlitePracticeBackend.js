@@ -7,6 +7,7 @@
 
     const BASE_PATH = '/api/sqlite';
     const STATUS_TTL_MS = 5000;
+    const VOCAB_STATE_META_KEY = 'vocab_state';
     let statusCache = null;
     let statusCheckedAt = 0;
 
@@ -157,6 +158,17 @@
         return payload || null;
     }
 
+    async function exportFullWrongRecords(recordIds = []) {
+        const ids = Array.isArray(recordIds)
+            ? recordIds.map((value) => String(value || '').trim()).filter(Boolean)
+            : [];
+        const payload = await request('/practice-records/full-wrong-export', {
+            method: 'POST',
+            body: JSON.stringify({ ids })
+        });
+        return payload && payload.export ? payload.export : null;
+    }
+
     async function readMeta(key, fallback = null) {
         const payload = await request(`/meta/${encodeURIComponent(String(key))}`);
         return payload && Object.prototype.hasOwnProperty.call(payload, 'value')
@@ -170,6 +182,14 @@
             body: JSON.stringify({ value: clone(value) })
         });
         return payload && Object.prototype.hasOwnProperty.call(payload, 'value') ? payload.value : value;
+    }
+
+    async function readVocabState(fallback = null) {
+        return readMeta(VOCAB_STATE_META_KEY, fallback);
+    }
+
+    async function writeVocabState(snapshot) {
+        return writeMeta(VOCAB_STATE_META_KEY, clone(snapshot) || {});
     }
 
     global.SqlitePracticeBackend = Object.freeze({
@@ -186,7 +206,10 @@
         replace,
         deleteMany,
         deleteById,
+        exportFullWrongRecords,
         readMeta,
-        writeMeta
+        writeMeta,
+        readVocabState,
+        writeVocabState
     });
 })(typeof window !== 'undefined' ? window : globalThis);

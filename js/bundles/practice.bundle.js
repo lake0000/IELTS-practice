@@ -4142,6 +4142,13 @@ class PracticeHistoryEnhancer {
                                         <p>一题一行，适合用 Excel 筛选错因和复盘</p>
                                     </div>
                                 </label>
+                                <label class="format-option">
+                                    <input type="radio" name="export-format" value="full-wrong-json">
+                                    <div class="option-content">
+                                        <strong>完整错题 JSON</strong>
+                                        <p>按需生成原文、题目、作答、标准答案和已标错因；已选记录优先，未选择则导出全部</p>
+                                    </div>
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -4172,6 +4179,8 @@ class PracticeHistoryEnhancer {
                 await this.exportAsMarkdown();
             } else if (selectedFormat === 'csv') {
                 await this.exportAsCsv();
+            } else if (selectedFormat === 'full-wrong-json') {
+                await this.exportFullWrongJson();
             } else {
                 await this.exportAsJSON();
             }
@@ -4242,15 +4251,7 @@ class PracticeHistoryEnhancer {
                 practice_records: practiceRecords
             };
 
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `practice_history_${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            this.downloadJsonFile(data, `practice_history_${new Date().toISOString().split('T')[0]}.json`);
 
             if (window.showMessage) {
                 window.showMessage('JSON 格式导出成功', 'success');
@@ -4260,6 +4261,51 @@ class PracticeHistoryEnhancer {
             console.error('JSON导出失败:', error);
             throw error;
         }
+    }
+
+    downloadJsonFile(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    getSelectedRecordIdsForExport() {
+        if (typeof window.getSelectedRecordsState !== 'function') {
+            return [];
+        }
+        const selected = window.getSelectedRecordsState();
+        if (selected instanceof Set) {
+            return Array.from(selected).map((value) => String(value || '').trim()).filter(Boolean);
+        }
+        if (Array.isArray(selected)) {
+            return selected.map((value) => String(value || '').trim()).filter(Boolean);
+        }
+        return [];
+    }
+
+    async exportFullWrongJson(recordIds = null) {
+        if (!window.PracticeRecordAPI || typeof window.PracticeRecordAPI.exportFullWrongRecords !== 'function') {
+            throw new Error('完整错题导出接口未加载');
+        }
+        const selectedIds = Array.isArray(recordIds)
+            ? recordIds.map((value) => String(value || '').trim()).filter(Boolean)
+            : this.getSelectedRecordIdsForExport();
+        const data = await window.PracticeRecordAPI.exportFullWrongRecords(selectedIds);
+        if (!data || !Array.isArray(data.records) || data.records.length === 0) {
+            throw new Error(selectedIds.length > 0 ? '选中的记录没有可导出的内容' : '没有练习记录可导出');
+        }
+        const scope = selectedIds.length > 0 ? `${selectedIds.length}条记录` : '全部记录';
+        this.downloadJsonFile(data, `practice_full_wrong_questions_${new Date().toISOString().split('T')[0]}.json`);
+        if (window.showMessage) {
+            window.showMessage(`完整错题 JSON 导出成功（${scope}）`, 'success');
+        }
+        return data;
     }
 
     /**

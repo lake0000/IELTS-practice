@@ -105,6 +105,56 @@
         return '';
     }
 
+    function normalizeCustomSuiteFrequencyScope(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (raw === 'high' || raw === 'only_high' || raw === '仅高频' || raw === '高频') {
+            return 'high';
+        }
+        if (
+            raw === 'high_medium'
+            || raw === 'high-medium'
+            || raw === 'highmedium'
+            || raw === 'high+medium'
+            || raw === '高频+次高频'
+            || raw === '高频次高频'
+        ) {
+            return 'high_medium';
+        }
+        if (raw === 'custom') {
+            return 'custom';
+        }
+        return 'all';
+    }
+
+    function isExamAllowedByCustomSuiteFrequency(exam, scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'all' || normalizedScope === 'custom') {
+            return true;
+        }
+        const bucket = normalizeFrequencyBucket(exam);
+        if (!bucket) {
+            return normalizedScope === 'all' || normalizedScope === 'custom';
+        }
+        if (normalizedScope === 'high') {
+            return bucket === 'high';
+        }
+        if (normalizedScope === 'high_medium') {
+            return bucket === 'high' || bucket === 'medium';
+        }
+        return true;
+    }
+
+    function formatCustomSuiteFrequencyScopeLabel(scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'high') {
+            return '仅高频';
+        }
+        if (normalizedScope === 'high_medium') {
+            return '高频+次高频';
+        }
+        return '全部频率';
+    }
+
     function applyBrowseFrequencyFilter(exams, frequencyFilter) {
         const list = Array.isArray(exams) ? exams.slice() : [];
         const filter = normalizeBrowseFrequencyFilter(
@@ -717,6 +767,13 @@
         if (currentCategory && examCategory && currentCategory !== examCategory) {
             return false;
         }
+        if (!isExamAllowedByCustomSuiteFrequency(exam, draft.frequencyScope)) {
+            const scopeLabel = formatCustomSuiteFrequencyScopeLabel(draft.frequencyScope);
+            if (typeof global.showMessage === 'function') {
+                global.showMessage('当前套题范围是' + scopeLabel + '，不能选择 ' + formatFrequencyLabel(exam.frequency || '低频') + ' 文章。', 'warning');
+            }
+            return false;
+        }
 
         const service = global.appStateService;
         let updatedDraft = null;
@@ -898,13 +955,18 @@
             sortMode: global.__browseSortMode,
             preferredFirstExamByCategory
         });
+        const customSuiteDraft = getCustomSuiteDraft();
+        if (customSuiteDraft && customSuiteDraft.status !== 'ready') {
+            examsToShow = examsToShow.filter((exam) => (
+                isExamAllowedByCustomSuiteFrequency(exam, customSuiteDraft.frequencyScope)
+            ));
+        }
         if (memorizeSelectionActive) {
             examsToShow = filterReadingMemorizeExams(examsToShow);
             if (typeof global.setBrowseTitle === 'function') {
                 global.setBrowseTitle('阅读背题选题');
             }
         }
-        const customSuiteDraft = getCustomSuiteDraft();
         const selectionMode = memorizeSelectionActive
             ? 'reading-memorize'
             : (isCustomSuiteSelectionActive() ? 'custom-suite' : '');

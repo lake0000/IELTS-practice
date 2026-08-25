@@ -31,6 +31,36 @@ function run() {
         false,
         'single option letter must not falsely match a textual accepted answer'
     );
+    assert.strictEqual(
+        core.compareAnswers('B MBA graduates', 'B'),
+        true,
+        'dragged option text with leading letter should match a single-letter answer key'
+    );
+    assert.strictEqual(
+        core.compareAnswers('E magic formula', 'E'),
+        true,
+        'lowercase option text after an uppercase label should still match the letter'
+    );
+    assert.strictEqual(
+        core.compareAnswers('I human nature', 'I'),
+        true,
+        'I-labeled option text should match the single-letter answer key'
+    );
+    assert.strictEqual(
+        core.compareAnswers('A business leaders', 'H'),
+        false,
+        'wrong leading option label must still be marked incorrect'
+    );
+    assert.strictEqual(
+        core.compareAnswers('A C', 'A'),
+        false,
+        'multi-letter answers separated by spaces must not be collapsed to the first option'
+    );
+    assert.strictEqual(
+        core.compareAnswers('a panoramic camera', 'A'),
+        false,
+        'lowercase article phrase must not be treated as option A'
+    );
 
     process.stdout.write(JSON.stringify({
         status: 'pass',

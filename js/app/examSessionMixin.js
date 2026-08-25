@@ -277,7 +277,7 @@
             if (resolvedDataKey) {
                 params.set('dataKey', String(resolvedDataKey));
             }
-            params.set('v', String(window.APP_ASSET_VERSION || '20260730-replay-detail-wrongreason'));
+            params.set('v', String(window.APP_ASSET_VERSION || '20260825-latest-suite-review-fix'));
             const practiceMode = options && typeof options.practiceMode === 'string'
                 ? options.practiceMode.trim().toLowerCase()
                 : '';

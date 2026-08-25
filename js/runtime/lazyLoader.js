@@ -6,7 +6,7 @@
     var groupStatus = Object.create(null);
     var dependencies = Object.create(null);
     var providedScripts = new Set();
-    var ASSET_VERSION = '20260730-replay-detail-wrongreason';
+var ASSET_VERSION = '20260825-latest-suite-review-fix';
     global.APP_ASSET_VERSION = ASSET_VERSION;
     var READING_EXAM_MANIFEST_SCRIPT = 'assets/generated/reading-exams/manifest.js';
     var LISTENING_EXAM_MANIFEST_SCRIPT = 'assets/generated/listening-exams/manifest.js';

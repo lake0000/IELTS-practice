@@ -57,6 +57,62 @@
         };
     }
 
+    function normalizeFrequencyBucket(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw || raw === 'unknown' || raw === '未知频率') {
+            return '';
+        }
+        if (raw === 'low' || raw === '低频') {
+            return 'low';
+        }
+        if (raw === 'medium' || raw === 'mid' || raw === '中频' || raw === 'very-high' || raw === '次高频') {
+            return 'medium';
+        }
+        if (raw === 'high' || raw === '高频' || raw === 'ultra-high' || raw === '超高频') {
+            return 'high';
+        }
+        return '';
+    }
+
+    function normalizeCustomSuiteFrequencyScope(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (raw === 'high' || raw === 'only_high' || raw === '仅高频' || raw === '高频') {
+            return 'high';
+        }
+        if (
+            raw === 'high_medium'
+            || raw === 'high-medium'
+            || raw === 'highmedium'
+            || raw === 'high+medium'
+            || raw === '高频+次高频'
+            || raw === '高频次高频'
+        ) {
+            return 'high_medium';
+        }
+        if (raw === 'custom') {
+            return 'custom';
+        }
+        return 'all';
+    }
+
+    function isCustomSuiteFrequencyAllowed(exam, scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'all' || normalizedScope === 'custom') {
+            return true;
+        }
+        const bucket = normalizeFrequencyBucket(exam && exam.frequency);
+        if (!bucket) {
+            return normalizedScope === 'all' || normalizedScope === 'custom';
+        }
+        if (normalizedScope === 'high') {
+            return bucket === 'high';
+        }
+        if (normalizedScope === 'high_medium') {
+            return bucket === 'high' || bucket === 'medium';
+        }
+        return true;
+    }
+
     function getCustomSuiteCategories(value) {
         const categories = value && Array.isArray(value.categories) && value.categories.length
             ? value.categories.slice()
@@ -480,6 +536,12 @@
 
             const normalizedExam = cloneCustomSuiteExam(exam);
             if (!normalizedExam || !normalizedExam.examId) {
+                return this.state.customSuiteDraft;
+            }
+            const activeScope = (this.state.customSuiteDraft && this.state.customSuiteDraft.frequencyScope)
+                || options.frequencyScope
+                || 'custom';
+            if (!isCustomSuiteFrequencyAllowed(normalizedExam, activeScope)) {
                 return this.state.customSuiteDraft;
             }
 

@@ -656,6 +656,67 @@ async function testMainWrongReasonSaveUpdatesSuiteAggregateRecord() {
     assert.strictEqual(records[0].accuracy, 0.75, 'suite wrong reason save must preserve aggregate accuracy');
 }
 
+async function testMainWrongReasonSavePreservesMultipleCategories() {
+    const context = createContext();
+    loadMain(context);
+    const { window } = context;
+    const hooks = window.__IELTS_MAIN_TEST__;
+    assert(hooks, 'main.js should expose wrong reason test hooks');
+
+    const records = [{
+        id: 'record_p3-high-181_completed',
+        sessionId: 'p3-high-181_1786000000000_original',
+        examId: 'p3-high-181',
+        dataKey: 'p3-high-181',
+        title: 'The Fruit Book 果实之书',
+        duration: 1500,
+        answerComparison: {
+            q7: { questionId: 'q7', userAnswer: 'wrong', correctAnswer: 'right', isCorrect: false }
+        },
+        scoreInfo: {
+            details: {
+                q7: { questionId: 'q7', isCorrect: false }
+            }
+        },
+        wrongReasons: {}
+    }];
+    window.PracticeRecordAPI = {
+        async list() {
+            return records.map((record) => JSON.parse(JSON.stringify(record)));
+        },
+        async getById(id) {
+            const record = records.find((entry) => entry.id === id);
+            return record ? JSON.parse(JSON.stringify(record)) : null;
+        },
+        async saveRecord(record) {
+            const index = records.findIndex((entry) => entry.id === record.id);
+            assert(index >= 0, 'multi-category save must update the existing record');
+            records[index] = JSON.parse(JSON.stringify(record));
+            return JSON.parse(JSON.stringify(records[index]));
+        }
+    };
+
+    const saved = await hooks.savePracticeWrongReasonUpdate({
+        sessionId: 'p3-high-181_1786000000000_review',
+        examId: 'p3-high-181',
+        dataKey: 'p3-high-181',
+        title: 'The Fruit Book 果实之书',
+        wrongReasons: {
+            q7: {
+                categories: ['定位错误', '单词不认识'],
+                note: 'multi category main save'
+            }
+        }
+    });
+
+    assert.strictEqual(saved.id, 'record_p3-high-181_completed');
+    assert.strictEqual(records.length, 1, 'multi-category save must not duplicate records');
+    assert.strictEqual(records[0].wrongReasons.q7.category, '定位错误');
+    assert.deepStrictEqual(records[0].wrongReasons.q7.categories, ['定位错误', '单词不认识']);
+    assert.deepStrictEqual(records[0].answerComparison.q7.wrongReason.categories, ['定位错误', '单词不认识']);
+    assert.strictEqual(records[0].duration, 1500, 'multi-category save must preserve duration');
+}
+
 async function main() {
     await testMainWrongReasonSaveFallsBackWhenSessionIdChanged();
     await testMainWrongReasonSaveUsesOnlySameExamCandidateWhenSessionChanged();
@@ -665,6 +726,7 @@ async function main() {
     await testMainWrongReasonSaveStillRejectsMissingTargets();
     await testMainWrongReasonSaveDerivesExamIdFromRecordSessionPrefix();
     await testMainWrongReasonSaveUpdatesSuiteAggregateRecord();
+    await testMainWrongReasonSavePreservesMultipleCategories();
     process.stdout.write(JSON.stringify({
         status: 'pass',
         detail: 'main wrong reason save fallback covered'

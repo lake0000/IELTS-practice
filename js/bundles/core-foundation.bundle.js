@@ -5106,13 +5106,27 @@ storageManager.ready
         const source = value && typeof value === 'object'
             ? value
             : { category: value };
-        const category = normalizeAnswerValue(source.category ?? source.reason ?? source.type);
+        const categories = [];
+        const addCategory = (item) => {
+            const category = normalizeAnswerValue(item);
+            if (category && !categories.includes(category)) {
+                categories.push(category);
+            }
+        };
+        if (Array.isArray(source.categories)) {
+            source.categories.forEach(addCategory);
+        }
+        addCategory(source.category);
+        addCategory(source.reason);
+        addCategory(source.type);
+        const category = categories[0] || '';
         const note = normalizeAnswerValue(source.note ?? source.detail ?? source.text);
         if (!category && !note) {
             return null;
         }
         return {
             category,
+            categories,
             note,
             updatedAt: source.updatedAt || new Date().toISOString()
         };
@@ -5662,7 +5676,12 @@ storageManager.ready
         const derivedTotalQuestions = deriveTotalQuestionCount(recordData, normalizedAnswers.length);
         const derivedCorrectAnswers = deriveCorrectAnswerCount(recordData, normalizedAnswers);
         const totalQuestions = ensureNumber(recordData.totalQuestions, derivedTotalQuestions);
-        const correctAnswers = ensureNumber(recordData.correctAnswers, derivedCorrectAnswers);
+        const correctAnswers = ensureNumber(
+            (recordData.scoreInfo && (recordData.scoreInfo.correct ?? recordData.scoreInfo.score))
+            ?? recordData.score
+            ?? recordData.correctAnswers,
+            derivedCorrectAnswers
+        );
         let accuracy = ensureNumber(
             recordData.accuracy
             ?? (recordData.realData && recordData.realData.accuracy)
@@ -5764,6 +5783,33 @@ storageManager.ready
             ? options.generateRecordId
             : defaultGenerateRecordId;
 
+        const percentage = Math.round(accuracy * 100);
+        const baseScoreInfo = Object.assign({}, recordData.scoreInfo || {});
+        const normalizedScoreInfo = Object.assign({}, baseScoreInfo, {
+            correct: correctAnswers,
+            score: correctAnswers,
+            total: totalQuestions,
+            totalQuestions,
+            accuracy,
+            percentage,
+            duration: resolveDurationSeconds(recordData, startTime, endTime),
+            timeSpent: baseScoreInfo.timeSpent ?? baseScoreInfo.duration ?? resolveDurationSeconds(recordData, startTime, endTime),
+            details: baseScoreInfo.details || detailSource || null
+        });
+
+        const baseRealScoreInfo = Object.assign({}, (recordData.realData && recordData.realData.scoreInfo) || {});
+        const normalizedRealScoreInfo = Object.assign({}, baseRealScoreInfo, {
+            correct: correctAnswers,
+            score: correctAnswers,
+            total: totalQuestions,
+            totalQuestions,
+            accuracy,
+            percentage,
+            duration: baseRealScoreInfo.duration ?? normalizedScoreInfo.duration,
+            timeSpent: baseRealScoreInfo.timeSpent ?? normalizedScoreInfo.timeSpent,
+            details: baseRealScoreInfo.details || detailSource || null
+        });
+
         return {
             id: recordId || generateRecordId(),
             examId: resolvedExamId,
@@ -5781,6 +5827,7 @@ storageManager.ready
             totalQuestions,
             correctAnswers,
             accuracy,
+            percentage,
             answers: normalizedAnswers,
             answerDetails: detailSource || null,
             correctAnswerMap: normalizedCorrectMap || {},
@@ -5791,11 +5838,7 @@ storageManager.ready
             suiteMode: Boolean(recordData.suiteMode || ((recordData.frequency || metadata.frequency || '').toLowerCase() === 'suite')),
             suiteSessionId: recordData.suiteSessionId || (metadata && metadata.suiteSessionId) || null,
             suiteEntries: normalizedSuiteEntries,
-            scoreInfo: recordData.scoreInfo
-                ? Object.assign({}, recordData.scoreInfo, {
-                    details: recordData.scoreInfo.details || detailSource || null
-                })
-                : (detailSource ? { details: detailSource } : null),
+            scoreInfo: normalizedScoreInfo,
             realData: recordData.realData
                 ? Object.assign({}, recordData.realData, {
                     examId: recordData.realData.examId || resolvedExamId,
@@ -5805,9 +5848,7 @@ storageManager.ready
                     correctAnswers: realDataCorrectAnswers,
                     correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
                     wrongReasons: clonePlainObject(normalizedWrongReasons),
-                    scoreInfo: Object.assign({}, (recordData.realData && recordData.realData.scoreInfo) || {}, {
-                        details: (recordData.realData && recordData.realData.scoreInfo && recordData.realData.scoreInfo.details) || detailSource || null
-                    }),
+                    scoreInfo: normalizedRealScoreInfo,
                     answerComparison: normalizedComparison || ((recordData.realData && recordData.realData.answerComparison)
                         ? clonePlainObject(recordData.realData.answerComparison)
                         : null)
@@ -5820,7 +5861,7 @@ storageManager.ready
                     correctAnswers: realDataCorrectAnswers,
                     correctAnswerMap: clonePlainObject(normalizedCorrectMap || {}),
                     wrongReasons: clonePlainObject(normalizedWrongReasons),
-                    scoreInfo: detailSource ? { details: detailSource } : null,
+                    scoreInfo: normalizedRealScoreInfo,
                     answerComparison: normalizedComparison || null
                 },
             answerComparison: normalizedComparison,
@@ -5998,7 +6039,7 @@ storageManager.ready
             Object.keys(correctAnswerMap).length || Object.keys(answerMap).length
         );
         const correctAnswers = ensureNumber(
-            rawPayload.correctAnswers ?? rawPayload.correctAnswersCount ?? scoreInfo.correct ?? scoreInfo.score ?? rawPayload.score,
+            scoreInfo.correct ?? scoreInfo.score ?? rawPayload.score ?? rawPayload.correctAnswersCount ?? rawPayload.correctAnswers,
             deriveCorrectAnswerCount({ answerDetails, scoreInfo }, answerList)
         );
         let accuracy = typeof rawPayload.accuracy === 'number'
@@ -6243,6 +6284,15 @@ storageManager.ready
         }
         const scoreInfo = record.scoreInfo || {};
         const metadata = record.metadata || {};
+        const resolveNumber = (...values) => {
+            for (let index = 0; index < values.length; index += 1) {
+                const numeric = Number(values[index]);
+                if (Number.isFinite(numeric)) {
+                    return numeric;
+                }
+            }
+            return null;
+        };
         const projectComparisonSummary = (source) => {
             if (!source || typeof source !== 'object') {
                 return null;
@@ -6306,11 +6356,25 @@ storageManager.ready
             endTime: record.endTime || null,
             date: record.date || null,
             duration: Number(record.duration ?? scoreInfo.duration ?? scoreInfo.timeSpent) || 0,
-            percentage: Number(record.percentage ?? scoreInfo.percentage) || 0,
-            accuracy: Number(record.accuracy ?? scoreInfo.accuracy) || 0,
-            score: Number(record.score ?? scoreInfo.score) || 0,
-            totalQuestions: Number(record.totalQuestions ?? scoreInfo.total) || 0,
-            correctAnswers: Number(record.correctAnswers ?? scoreInfo.correct) || 0,
+            percentage: (() => {
+                const score = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers);
+                const total = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions);
+                const accuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+                const percentage = resolveNumber(record.percentage, scoreInfo.percentage);
+                if (percentage && percentage > 0) return percentage;
+                if (accuracy && accuracy > 0) return Math.round((accuracy > 1 ? accuracy / 100 : accuracy) * 100);
+                return total && total > 0 && score && score > 0 ? Math.round((score / total) * 100) : (percentage || 0);
+            })(),
+            accuracy: (() => {
+                const score = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers);
+                const total = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions);
+                const accuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+                if (accuracy != null && accuracy > 0) return accuracy > 1 ? accuracy / 100 : accuracy;
+                return total && total > 0 && score && score > 0 ? score / total : (accuracy || 0);
+            })(),
+            score: Number(record.score ?? scoreInfo.score ?? scoreInfo.correct) || 0,
+            totalQuestions: Number(record.totalQuestions ?? scoreInfo.total ?? scoreInfo.totalQuestions) || 0,
+            correctAnswers: Number(scoreInfo.correct ?? scoreInfo.score ?? record.score ?? record.correctAnswers) || 0,
             status: record.status || 'completed',
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
@@ -6322,13 +6386,13 @@ storageManager.ready
             questionTypePerformance: record.questionTypePerformance || null,
             // 轻量 scoreInfo 子集：供 accuracy/duration 等 fallback 读取
             scoreInfo: {
-                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : null,
+                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : (record.accuracy != null ? record.accuracy : null),
                 duration: scoreInfo.duration != null ? scoreInfo.duration : null,
                 timeSpent: scoreInfo.timeSpent != null ? scoreInfo.timeSpent : null,
-                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : null,
-                score: scoreInfo.score != null ? scoreInfo.score : null,
-                total: scoreInfo.total != null ? scoreInfo.total : null,
-                correct: scoreInfo.correct != null ? scoreInfo.correct : null
+                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : (record.percentage != null ? record.percentage : null),
+                score: scoreInfo.score != null ? scoreInfo.score : (record.score != null ? record.score : null),
+                total: scoreInfo.total != null ? scoreInfo.total : (record.totalQuestions != null ? record.totalQuestions : null),
+                correct: scoreInfo.correct != null ? scoreInfo.correct : (record.correctAnswers != null ? record.correctAnswers : null)
             },
             metadata: {
                 category: metadata.category || record.category || null,
@@ -6699,6 +6763,7 @@ storageManager.ready
 
     const BASE_PATH = '/api/sqlite';
     const STATUS_TTL_MS = 5000;
+    const VOCAB_STATE_META_KEY = 'vocab_state';
     let statusCache = null;
     let statusCheckedAt = 0;
 
@@ -6849,6 +6914,17 @@ storageManager.ready
         return payload || null;
     }
 
+    async function exportFullWrongRecords(recordIds = []) {
+        const ids = Array.isArray(recordIds)
+            ? recordIds.map((value) => String(value || '').trim()).filter(Boolean)
+            : [];
+        const payload = await request('/practice-records/full-wrong-export', {
+            method: 'POST',
+            body: JSON.stringify({ ids })
+        });
+        return payload && payload.export ? payload.export : null;
+    }
+
     async function readMeta(key, fallback = null) {
         const payload = await request(`/meta/${encodeURIComponent(String(key))}`);
         return payload && Object.prototype.hasOwnProperty.call(payload, 'value')
@@ -6862,6 +6938,14 @@ storageManager.ready
             body: JSON.stringify({ value: clone(value) })
         });
         return payload && Object.prototype.hasOwnProperty.call(payload, 'value') ? payload.value : value;
+    }
+
+    async function readVocabState(fallback = null) {
+        return readMeta(VOCAB_STATE_META_KEY, fallback);
+    }
+
+    async function writeVocabState(snapshot) {
+        return writeMeta(VOCAB_STATE_META_KEY, clone(snapshot) || {});
     }
 
     global.SqlitePracticeBackend = Object.freeze({
@@ -6878,8 +6962,11 @@ storageManager.ready
         replace,
         deleteMany,
         deleteById,
+        exportFullWrongRecords,
         readMeta,
-        writeMeta
+        writeMeta,
+        readVocabState,
+        writeVocabState
     });
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -7075,15 +7162,28 @@ storageManager.ready
         const source = value && typeof value === 'object'
             ? value
             : { category: value };
-        const category = source.category ?? source.reason ?? source.type;
+        const categories = [];
+        const addCategory = (item) => {
+            const normalized = item == null ? '' : String(item).trim();
+            if (normalized && !categories.includes(normalized)) {
+                categories.push(normalized);
+            }
+        };
+        if (Array.isArray(source.categories)) {
+            source.categories.forEach(addCategory);
+        }
+        addCategory(source.category);
+        addCategory(source.reason);
+        addCategory(source.type);
+        const category = categories[0] || '';
         const note = source.note ?? source.detail ?? source.text;
-        const normalizedCategory = category == null ? '' : String(category).trim();
         const normalizedNote = note == null ? '' : String(note).trim();
-        if (!normalizedCategory && !normalizedNote) {
+        if (!category && !normalizedNote) {
             return null;
         }
         return {
-            category: normalizedCategory,
+            category,
+            categories,
             note: normalizedNote,
             updatedAt: source.updatedAt || new Date().toISOString()
         };
@@ -7568,7 +7668,7 @@ storageManager.ready
                 return Math.max(0, Math.min(1, numeric));
             }
         }
-        const correct = Number(record && (record.correctAnswers ?? record.scoreInfo?.correct ?? record.score));
+        const correct = Number(record && (record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.score ?? record.correctAnswers));
         const total = Number(record && (record.totalQuestions ?? record.scoreInfo?.total));
         return Number.isFinite(correct) && Number.isFinite(total) && total > 0
             ? Math.max(0, Math.min(1, correct / total))
@@ -7773,6 +7873,22 @@ storageManager.ready
         );
     }
 
+    /**
+     * 按需导出完整错题包：只在用户触发导出时由本地服务合并题库原文、
+     * 题目、作答、标准答案和已标错因，不把这些重字段常驻写入练习记录。
+     */
+    async function exportFullWrongRecords(recordIds = [], options = {}) {
+        const ids = Array.isArray(recordIds)
+            ? recordIds.map((value) => String(value || '').trim()).filter(Boolean)
+            : [];
+        const backend = await getAvailableSqliteBackend(options.status || {});
+        if (!backend || typeof backend.exportFullWrongRecords !== 'function') {
+            throw new Error('完整错题导出需要先启动本地服务');
+        }
+        await seedSqliteBackendFromLocalIfNeeded(backend);
+        return await backend.exportFullWrongRecords(ids);
+    }
+
     /** 返回去重后的 examId 列表，供 overview 统计使用 */
     async function distinctExamIds(options = {}) {
         const summaries = await listSummary(options);
@@ -7846,6 +7962,25 @@ storageManager.ready
         const answerComparison = projectComparisonSummary(
             record.answerComparison || (record.realData && record.realData.answerComparison) || record.answerDetails || (scoreInfo && scoreInfo.details)
         );
+        const resolveNumber = (...values) => {
+            for (let index = 0; index < values.length; index += 1) {
+                const numeric = Number(values[index]);
+                if (Number.isFinite(numeric)) {
+                    return numeric;
+                }
+            }
+            return null;
+        };
+        const resolvedScore = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers) || 0;
+        const resolvedTotal = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions) || 0;
+        const rawAccuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+        const resolvedAccuracy = rawAccuracy != null && rawAccuracy > 0
+            ? (rawAccuracy > 1 ? rawAccuracy / 100 : rawAccuracy)
+            : (resolvedTotal > 0 && resolvedScore > 0 ? resolvedScore / resolvedTotal : (rawAccuracy || 0));
+        const rawPercentage = resolveNumber(record.percentage, scoreInfo.percentage);
+        const resolvedPercentage = rawPercentage != null && rawPercentage > 0
+            ? rawPercentage
+            : (resolvedAccuracy > 0 ? Math.round(resolvedAccuracy * 100) : (rawPercentage || 0));
         return {
             id: record.id || record.sessionId || '',
             sessionId: record.sessionId || null,
@@ -7860,11 +7995,11 @@ storageManager.ready
             endTime: record.endTime || null,
             date: record.date || null,
             duration: Number(record.duration != null ? record.duration : (scoreInfo.duration != null ? scoreInfo.duration : scoreInfo.timeSpent)) || 0,
-            percentage: Number(record.percentage != null ? record.percentage : scoreInfo.percentage) || 0,
-            accuracy: Number(record.accuracy != null ? record.accuracy : scoreInfo.accuracy) || 0,
-            score: Number(record.score != null ? record.score : scoreInfo.score) || 0,
-            totalQuestions: Number(record.totalQuestions != null ? record.totalQuestions : scoreInfo.total) || 0,
-            correctAnswers: Number(record.correctAnswers != null ? record.correctAnswers : scoreInfo.correct) || 0,
+            percentage: resolvedPercentage,
+            accuracy: resolvedAccuracy,
+            score: resolvedScore,
+            totalQuestions: resolvedTotal,
+            correctAnswers: Number(scoreInfo.correct != null ? scoreInfo.correct : (record.score != null ? record.score : record.correctAnswers)) || 0,
             status: record.status || 'completed',
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
@@ -7874,13 +8009,13 @@ storageManager.ready
             suiteSessionId: record.suiteSessionId || metadata.suiteSessionId || null,
             questionTypePerformance: record.questionTypePerformance || null,
             scoreInfo: {
-                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : null,
+                accuracy: resolvedAccuracy,
                 duration: scoreInfo.duration != null ? scoreInfo.duration : null,
                 timeSpent: scoreInfo.timeSpent != null ? scoreInfo.timeSpent : null,
-                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : null,
-                score: scoreInfo.score != null ? scoreInfo.score : null,
-                total: scoreInfo.total != null ? scoreInfo.total : null,
-                correct: scoreInfo.correct != null ? scoreInfo.correct : null
+                percentage: resolvedPercentage,
+                score: resolvedScore,
+                total: resolvedTotal,
+                correct: Number(scoreInfo.correct ?? scoreInfo.score ?? record.score ?? record.correctAnswers) || 0
             },
             metadata: {
                 category: metadata.category || record.category || null,
@@ -8212,7 +8347,7 @@ storageManager.ready
 
     function toSummaryMetrics(record = {}) {
         const total = Number(record.totalQuestions ?? record.scoreInfo?.total ?? record.scoreInfo?.totalQuestions ?? record.realData?.scoreInfo?.total ?? record.realData?.totalQuestions);
-        const correct = Number(record.correctAnswers ?? record.score ?? record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.realData?.scoreInfo?.correct ?? record.realData?.score);
+        const correct = Number(record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.score ?? record.realData?.scoreInfo?.correct ?? record.realData?.score ?? record.correctAnswers);
         const safeTotal = Number.isFinite(total) && total >= 0 ? total : 0;
         const safeCorrect = Number.isFinite(correct) && correct >= 0 ? correct : 0;
 
@@ -8258,6 +8393,7 @@ storageManager.ready
         clear,
         deleteById,
         deleteMany,
+        exportFullWrongRecords,
         saveRecord,
         normalizeRecord,
         fromCompletion,
@@ -8406,6 +8542,21 @@ storageManager.ready
         return null;
     }
 
+    function resolveVocabState(data) {
+        if (!data || typeof data !== 'object') return null;
+        if (isPlainObject(data.vocab_state)) return data.vocab_state;
+        if (isPlainObject(data.vocabState)) return data.vocabState;
+        return null;
+    }
+
+    async function captureVocabState() {
+        if (global.VocabStore && typeof global.VocabStore.captureSnapshot === 'function') {
+            return await global.VocabStore.captureSnapshot();
+        }
+        const metaValue = await readMeta('vocab_state', null).catch(() => null);
+        return isPlainObject(metaValue) ? metaValue : null;
+    }
+
     /**
      * Canonical dual-schema payload so any legacy restore path can read snake or camel keys.
      */
@@ -8415,6 +8566,7 @@ storageManager.ready
         const stats = resolveUserStats(source);
         const examIndex = resolveExamIndex(source);
         const storageVersion = resolveStorageVersion(source);
+        const vocabState = resolveVocabState(source);
         const payload = { ...source };
 
         if (records) {
@@ -8433,6 +8585,10 @@ storageManager.ready
             payload.storage_version = storageVersion;
             payload.storageVersion = storageVersion;
         }
+        if (vocabState) {
+            payload.vocab_state = vocabState;
+            payload.vocabState = vocabState;
+        }
         return payload;
     }
 
@@ -8450,12 +8606,14 @@ storageManager.ready
 
         const examIndex = await readMeta('exam_index', []);
         const storageVersion = await readMeta('storage_version', null);
+        const vocabState = await captureVocabState();
 
         return normalizePayload({
             practice_records: practiceRecords,
             user_stats: userStats,
             exam_index: Array.isArray(examIndex) ? examIndex : [],
             storage_version: storageVersion,
+            vocab_state: vocabState,
             ...(isPlainObject(extra) ? extra : {})
         });
     }
@@ -8549,9 +8707,11 @@ storageManager.ready
         const stats = resolveUserStats(payload);
         const examIndex = resolveExamIndex(payload);
         const storageVersion = resolveStorageVersion(payload);
+        const vocabState = resolveVocabState(payload);
         const restoreRecords = options.restoreRecords !== false;
         const restoreExamIndex = options.restoreExamIndex !== false;
         const restoreStorageVersion = options.restoreStorageVersion !== false;
+        const restoreVocab = options.restoreVocab !== false;
 
         if (restoreRecords && records != null) {
             if (Array.isArray(records) && records.length === 0 && options.allowEmptyRestore !== true) {
@@ -8578,6 +8738,14 @@ storageManager.ready
             await writeMeta('storage_version', storageVersion);
         }
 
+        if (restoreVocab && vocabState) {
+            if (global.VocabStore && typeof global.VocabStore.restoreSnapshot === 'function') {
+                await global.VocabStore.restoreSnapshot(vocabState, { syncBackend: true, source: 'backup' });
+            } else {
+                await writeMeta('vocab_state', vocabState);
+            }
+        }
+
         // Optional system settings (DataIntegrityManager snapshots)
         if (isPlainObject(payload.system_settings)) {
             const repos = getRepositories();
@@ -8591,7 +8759,8 @@ storageManager.ready
             restoredRecords: records != null,
             restoredStats: isPlainObject(stats),
             restoredExamIndex: Boolean(restoreExamIndex && examIndex),
-            restoredStorageVersion: Boolean(restoreStorageVersion && storageVersion != null)
+            restoredStorageVersion: Boolean(restoreStorageVersion && storageVersion != null),
+            restoredVocab: Boolean(restoreVocab && vocabState)
         };
     }
 
@@ -8678,7 +8847,8 @@ storageManager.ready
         resolvePracticeRecords,
         resolveUserStats,
         resolveExamIndex,
-        resolveStorageVersion
+        resolveStorageVersion,
+        resolveVocabState
     };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -10904,7 +11074,7 @@ storageManager.ready
             params.set('examId', String(examId));
         }
         params.set('dataKey', String(resolvedDataKey));
-        params.set('v', String(global.APP_ASSET_VERSION || '20260730-replay-detail-wrongreason'));
+                params.set('v', String(global.APP_ASSET_VERSION || '20260825-latest-suite-review-fix'));
         return `assets/generated/reading-exams/reading-practice-unified.html?${params.toString()}`;
     }
 
@@ -11192,7 +11362,7 @@ storageManager.ready
       "script": "./p3-high-03.js",
       "title": "What makes a musical expert_ 音乐天赋",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/100. P3 - What makes a musical expert_ 音乐天赋【高】/",
       "filename": "100. P3 - What makes a musical expert_ 音乐天赋【高】.html",
@@ -11207,8 +11377,8 @@ storageManager.ready
       "script": "./p3-high-04.js",
       "title": "Yawning 打呵欠",
       "category": "P3",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/101. P3 - Yawning 打呵欠【高】/",
       "filename": "101. P3 - Yawning 打呵欠【高】.html",
       "hasHtml": true,
@@ -11237,8 +11407,8 @@ storageManager.ready
       "script": "./p2-low-06.js",
       "title": "Biomimicry 仿生学",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/103. P2 - Biomimicry 仿生学/",
       "filename": "103. P2 - Biomimicry 仿生学.html",
       "hasHtml": true,
@@ -11252,7 +11422,7 @@ storageManager.ready
       "script": "./p3-low-07.js",
       "title": "Star Performers 明星员工",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/104. P3 - Star Performers 明星员工/",
       "filename": "104. P3 - Star Performers 明星员工.html",
@@ -11268,7 +11438,7 @@ storageManager.ready
       "title": "How the Petri dish supports scientific advances 培养皿",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/105. P2 - How the Petri dish supports scientific advances 培养皿/",
       "filename": "105. P2 - How the Petri dish supports scientific advances 培养皿.html",
       "hasHtml": true,
@@ -11282,8 +11452,8 @@ storageManager.ready
       "script": "./p2-high-09.js",
       "title": "Early Approaches to Organisational Design 组织设计",
       "category": "P2",
-      "frequency": "次高频",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/106. P2 - Early Approaches to Organisational Design 组织设计【高】/",
       "filename": "106. P2 - Early Approaches to Organisational Design 组织设计【高】.html",
       "hasHtml": true,
@@ -11313,7 +11483,7 @@ storageManager.ready
       "title": "Bovids 牛科动物",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/108. P1 - Bovids 牛科动物/",
       "filename": "108. P1 - Bovids 牛科动物.html",
       "hasHtml": true,
@@ -11328,7 +11498,7 @@ storageManager.ready
       "title": "Humanities and the health professional 人文医学",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/109. P3 - Humanities and the health professional 人文医学/",
       "filename": "109. P3 - Humanities and the health professional 人文医学.html",
       "hasHtml": true,
@@ -11342,8 +11512,8 @@ storageManager.ready
       "script": "./p1-low-13.js",
       "title": "Report on a university drama project 大学戏剧项目报告",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/11. P1 - Report on a university drama project 大学戏剧项目报告/",
       "filename": "11. P1 - Report on a university drama project 大学戏剧项目报告.html",
       "hasHtml": true,
@@ -11357,8 +11527,8 @@ storageManager.ready
       "script": "./p2-high-14.js",
       "title": "Should space be explored by robots or by humans 人机太空探索",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/110. P2 - Should space be explored by robots or by humans 人机太空探索【高】/",
       "filename": "110. P2 - Should space be explored by robots or by humans 人机太空探索【高】.html",
       "hasHtml": true,
@@ -11372,7 +11542,7 @@ storageManager.ready
       "script": "./p3-high-15.js",
       "title": "Whale Culture 鲸鱼文化",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/111. P3 - Whale Culture 鲸鱼文化【高】/",
       "filename": "111. P3 - Whale Culture 鲸鱼文化【高】.html",
@@ -11418,7 +11588,7 @@ storageManager.ready
       "title": "Unlocking the mystery of dreams 梦的解析",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/114. P3 - Unlocking the mystery of dreams 梦的解析【次】/",
       "filename": "114. P3 - Unlocking the mystery of dreams 梦的解析【次】.html",
       "hasHtml": true,
@@ -11432,7 +11602,7 @@ storageManager.ready
       "script": "./p2-high-19.js",
       "title": "Mind Music 脑海中的音乐(心灵音乐)",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/115. P2 - Mind Music 脑海中的音乐(心灵音乐)【高】/",
       "filename": "115. P2 - Mind Music 脑海中的音乐(心灵音乐)【高】.html",
@@ -11462,7 +11632,7 @@ storageManager.ready
       "script": "./p2-high-21.js",
       "title": "Stress Less 工作压力",
       "category": "P2",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/117. P2 - Stress Less 工作压力【高】/",
       "filename": "117. P2 - Stress Less 工作压力【高】.html",
@@ -11477,7 +11647,7 @@ storageManager.ready
       "script": "./p3-medium-22.js",
       "title": "Neanderthal Technology 尼安德特人的生存技艺",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/118. P3 - Neanderthal Technology 尼安德特人的生存技艺【次】/",
       "filename": "118. P3 - Neanderthal Technology 尼安德特人的生存技艺【次】.html",
@@ -11492,7 +11662,7 @@ storageManager.ready
       "script": "./p2-high-23.js",
       "title": "The Constant Evolution of the Humble Tomato 番茄的演化",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/119. P2 - The Constant Evolution of the Humble Tomato 番茄的演化【高】/",
       "filename": "119. P2 - The Constant Evolution of the Humble Tomato 番茄的演化【高】.html",
@@ -11522,7 +11692,7 @@ storageManager.ready
       "script": "./p2-high-25.js",
       "title": "Will Eating Less Make You Live Longer 节食与长寿",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/120. P2 - Will Eating Less Make You Live Longer 节食与长寿【高】/",
       "filename": "120. P2 - Will Eating Less Make You Live Longer 节食与长寿【高】.html",
@@ -11537,7 +11707,7 @@ storageManager.ready
       "script": "./p1-high-27.js",
       "title": "Footprints in the Mud 恐龙脚印",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/122. P1 - Footprints in the Mud 恐龙脚印【高】/",
       "filename": "122. P1 - Footprints in the Mud 恐龙脚印【高】.html",
@@ -11568,7 +11738,7 @@ storageManager.ready
       "title": "The extinction of the cave bear 洞熊的灭绝",
       "category": "P1",
       "frequency": "次高频",
-      "difficultyScore": null,
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/124. P1 - The extinction of the cave bear 洞熊的灭绝【次】/",
       "filename": "124. P1 - The extinction of the cave bear 洞熊的灭绝【次】.html",
       "hasHtml": true,
@@ -11582,7 +11752,7 @@ storageManager.ready
       "script": "./p1-low-30.js",
       "title": "Investing in the Future 投资未来",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/125. P1 - Investing in the Future 投资未来/",
       "filename": "125. P1 - Investing in the Future 投资未来.html",
@@ -11627,7 +11797,7 @@ storageManager.ready
       "script": "./p1-medium-33.js",
       "title": "The Pyramid of Cestius 罗马金字塔",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/128. P1 - The Pyramid of Cestius 罗马金字塔【次】/",
       "filename": "128. P1 - The Pyramid of Cestius 罗马金字塔【次】.html",
@@ -11658,7 +11828,7 @@ storageManager.ready
       "title": "Sweet Trouble 澳洲制糖产业",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/13. P1 - Sweet Trouble 澳洲制糖产业/",
       "filename": "13. P1 - Sweet Trouble 澳洲制糖产业.html",
       "hasHtml": true,
@@ -11687,7 +11857,7 @@ storageManager.ready
       "script": "./p2-low-37.js",
       "title": "Keeping the water away 洪水防控",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/131. P2 - Keeping the water away 洪水防控/",
       "filename": "131. P2 - Keeping the water away 洪水防控.html",
@@ -11762,7 +11932,7 @@ storageManager.ready
       "script": "./p3-low-42.js",
       "title": "The peopling of Patagonia 巴塔哥尼亚的人类迁徙",
       "category": "P3",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/136. P3 - The peopling of Patagonia 巴塔哥尼亚的人类迁徙/",
       "filename": "136. P3 - The peopling of Patagonia 巴塔哥尼亚的人类迁徙.html",
@@ -11777,7 +11947,7 @@ storageManager.ready
       "script": "./p3-low-43.js",
       "title": "What is social history 社会史",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/137. P3 - What is social history 社会史/",
       "filename": "137. P3 - What is social history 社会史.html",
@@ -11793,7 +11963,7 @@ storageManager.ready
       "title": "Conformity 从众心理",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/138. P3 - Conformity 从众心理/",
       "filename": "138. P3 - Conformity 从众心理.html",
       "hasHtml": true,
@@ -11807,7 +11977,7 @@ storageManager.ready
       "script": "./p1-low-45.js",
       "title": "Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究/",
       "filename": "139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究.html",
@@ -11822,7 +11992,7 @@ storageManager.ready
       "script": "./p1-low-46.js",
       "title": "Sydney Opera House 悉尼歌剧院",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/14. P1 - Sydney Opera House 悉尼歌剧院/",
       "filename": "14. P1 - Sydney Opera House 悉尼歌剧院.html",
@@ -11852,13 +12022,13 @@ storageManager.ready
       "script": "./p1-low-48.js",
       "title": "The history of the guitar 吉他的历史",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/141. P1 - The history of the guitar 吉他的历史/",
       "filename": "141. P1 - The history of the guitar 吉他的历史.html",
       "hasHtml": true,
-      "hasPdf": false,
-      "pdfFilename": "",
+      "hasPdf": true,
+      "pdfFilename": "ReadingPractice/PDF/141. P1 - The history of the guitar 吉他的历史.pdf",
       "sourceKind": "generated-reading"
     },
     "p2-low-49": {
@@ -11868,7 +12038,7 @@ storageManager.ready
       "title": "Born to Trade 交易的本能",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/142. P2 - Born to Trade 交易的本能/",
       "filename": "142. P2 - Born to Trade 交易的本能.html",
       "hasHtml": true,
@@ -11882,8 +12052,8 @@ storageManager.ready
       "script": "./p2-low-50.js",
       "title": "Jellyfish – The Dominant Species 水母·海洋中的优势物种",
       "category": "P2",
-      "frequency": "次高频",
-      "difficultyScore": 3.5,
+      "frequency": "高频",
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/143. P2 - Jellyfish – The Dominant Species 水母·海洋中的优势物种/",
       "filename": "143. P2 - Jellyfish – The Dominant Species 水母·海洋中的优势物种.html",
       "hasHtml": true,
@@ -11898,7 +12068,7 @@ storageManager.ready
       "title": "The gender gap in New Zealand’s high school examination results 新西兰考试成绩的性别差异",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/144. P2 - The gender gap in New Zealand’s high school examination results 新西兰考试成绩的性别差异/",
       "filename": "144. P2 - The gender gap in New Zealand’s high school examination results 新西兰考试成绩的性别差异.html",
       "hasHtml": true,
@@ -11912,8 +12082,8 @@ storageManager.ready
       "script": "./p1-low-52.js",
       "title": "Caral an ancient South American city 卡拉尔古城",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/145. P1 - Caral an ancient South American city 卡拉尔古城/",
       "filename": "145. P1 - Caral an ancient South American city 卡拉尔古城.html",
       "hasHtml": true,
@@ -11942,8 +12112,8 @@ storageManager.ready
       "script": "./p3-low-54.js",
       "title": "Movement Underwater 水下运动",
       "category": "P3",
-      "frequency": "次高频",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/147. P3 - Movement Underwater 水下运动/",
       "filename": "147. P3 - Movement Underwater 水下运动.html",
       "hasHtml": true,
@@ -11973,7 +12143,7 @@ storageManager.ready
       "title": "Learning to be bilingual 双语学习",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/149. P3 - Learning to be bilingual 双语学习/",
       "filename": "149. P3 - Learning to be bilingual 双语学习.html",
       "hasHtml": true,
@@ -12003,7 +12173,7 @@ storageManager.ready
       "title": "Insect Decision-Making 昆虫决策",
       "category": "P2",
       "frequency": "次高频",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/150. P2 - Insect Decision-Making 昆虫决策【次】/",
       "filename": "150. P2 - Insect Decision-Making 昆虫决策【次】.html",
       "hasHtml": true,
@@ -12018,7 +12188,7 @@ storageManager.ready
       "title": "Inside the mind of a fan 观赛心境",
       "category": "P3",
       "frequency": "次高频",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/151. P3 - Inside the mind of a fan 观赛心境/",
       "filename": "151. P3 - Inside the mind of a fan 观赛心境.html",
       "hasHtml": true,
@@ -12063,7 +12233,7 @@ storageManager.ready
       "title": "The purpose of facial expressions 面部表情",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/154. P2 - The purpose of facial expressions 面部表情/",
       "filename": "154. P2 - The purpose of facial expressions 面部表情.html",
       "hasHtml": true,
@@ -12108,7 +12278,7 @@ storageManager.ready
       "title": "Boring Buildings 无聊建筑",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/157. P2 - Boring Buildings 无聊建筑/",
       "filename": "157. P2 - Boring Buildings 无聊建筑.html",
       "hasHtml": true,
@@ -12138,7 +12308,7 @@ storageManager.ready
       "title": "Scented Plants 植物的味道",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/159. P1 - Scented Plants 植物的味道/",
       "filename": "159. P1 - Scented Plants 植物的味道.html",
       "hasHtml": true,
@@ -12152,8 +12322,8 @@ storageManager.ready
       "script": "./p1-low-68.js",
       "title": "The Clipper Races 帆船竞速",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/16. P1 - The Clipper Races 帆船竞速/",
       "filename": "16. P1 - The Clipper Races 帆船竞速.html",
       "hasHtml": true,
@@ -12168,7 +12338,7 @@ storageManager.ready
       "title": "An important language development 楔形文字",
       "category": "P1",
       "frequency": "次高频",
-      "difficultyScore": 2,
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/160. P1 - An important language development 楔形文字/",
       "filename": "160. P1 - An important language development 楔形文字.html",
       "hasHtml": true,
@@ -12182,8 +12352,8 @@ storageManager.ready
       "script": "./p1-low-70.js",
       "title": "Fluorescence Deep sea discovery深海发光生物研究",
       "category": "P1",
-      "frequency": "次高频",
-      "difficultyScore": null,
+      "frequency": "low",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/161. P1 - Fluorescence Deep sea discovery深海发光生物研究/",
       "filename": "161. P1 - Fluorescence Deep sea discovery深海发光生物研究.html",
       "hasHtml": true,
@@ -12243,7 +12413,7 @@ storageManager.ready
       "title": "The Placebo Effect5 安慰剂效应",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/165. P3 - The Placebo Effect5 安慰剂效应/",
       "filename": "165. P3 - The Placebo Effect5 安慰剂效应.html",
       "hasHtml": true,
@@ -12257,8 +12427,8 @@ storageManager.ready
       "script": "./p2-low-75.js",
       "title": "Lean Production Innovation 精益生产",
       "category": "P2",
-      "frequency": "次高频",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/166. P2 - Lean Production Innovation 精益生产/",
       "filename": "166. P2 - Lean Production Innovation 精益生产.html",
       "hasHtml": true,
@@ -12273,7 +12443,7 @@ storageManager.ready
       "title": "Sign, Baby, Sign! 美国手语",
       "category": "P3",
       "frequency": "高频",
-      "difficultyScore": 3.5,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/167. P3 - Sign, Baby, Sign! 美国手语/",
       "filename": "167. P3 - Sign, Baby, Sign! 美国手语.html",
       "hasHtml": true,
@@ -12287,8 +12457,8 @@ storageManager.ready
       "script": "./p2-low-77.js",
       "title": "Mammoth Kill 猛犸象的灭绝",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/168. P2 - Mammoth Kill 猛犸象的灭绝/",
       "filename": "168. P2 - Mammoth Kill 猛犸象的灭绝.html",
       "hasHtml": true,
@@ -12303,7 +12473,7 @@ storageManager.ready
       "title": "The Costs of Brand Loyalty 品牌忠诚的代价",
       "category": "P3",
       "frequency": "次高频",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/169. P3 - The Costs of Brand Loyalty 品牌忠诚的代价/",
       "filename": "169. P3 - The Costs of Brand Loyalty 品牌忠诚的代价.html",
       "hasHtml": true,
@@ -12332,8 +12502,8 @@ storageManager.ready
       "script": "./p1-low-80.js",
       "title": "The unsung sense 被低估的嗅觉",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/170. P1 - The unsung sense 被低估的嗅觉/",
       "filename": "170. P1 - The unsung sense 被低估的嗅觉.html",
       "hasHtml": true,
@@ -12348,7 +12518,7 @@ storageManager.ready
       "title": "Salt  盐的历史",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/171. P1 - Salt  盐的历史/",
       "filename": "171. P1 - Salt  盐的历史.html",
       "hasHtml": true,
@@ -12362,8 +12532,8 @@ storageManager.ready
       "script": "./p1-high-82.js",
       "title": "Think Small 微观科学",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/172. P1 - Think Small 微观科学【高】/",
       "filename": "172. P1 - Think Small 微观科学.html",
       "hasHtml": true,
@@ -12408,7 +12578,7 @@ storageManager.ready
       "title": "Music soothes and awes 音乐疗愈",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/175. P3 - Music soothes and awes 音乐疗愈/",
       "filename": "175. P3 - Music soothes and awes 音乐疗愈.html",
       "hasHtml": true,
@@ -12422,8 +12592,8 @@ storageManager.ready
       "script": "./p2-medium-86.js",
       "title": "Urban Regeneration 柏林公园改造",
       "category": "P2",
-      "frequency": "高频",
-      "difficultyScore": 3.5,
+      "frequency": "次高频",
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/176. P2 - Urban Regeneration 柏林公园改造【次】/",
       "filename": "176. P2 - Urban Regeneration 柏林公园改造.html",
       "hasHtml": true,
@@ -12497,7 +12667,7 @@ storageManager.ready
       "script": "./p2-high-91.js",
       "title": "Australia’s camouflaged creatures 澳洲伪装生物",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/180. P2 - Australia’s camouflaged creatures 澳洲伪装生物【高】/",
       "filename": "180. P2 - Australia’s camouflaged creatures 澳洲伪装生物.html",
@@ -12512,7 +12682,7 @@ storageManager.ready
       "script": "./p1-high-92.js",
       "title": "Dust and the American West 美国西部尘埃",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/181. P1 - Dust and the American West 美国西部尘埃【高】/",
       "filename": "181. P1 - Dust and the American West 美国西部尘埃.html",
@@ -12527,8 +12697,8 @@ storageManager.ready
       "script": "./p2-medium-93.js",
       "title": "Antarctic research 南极考察",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/182. P2 - Antarctic research 南极考察【次】/",
       "filename": "182. P2 - Antarctic research 南极考察.html",
       "hasHtml": true,
@@ -12557,7 +12727,7 @@ storageManager.ready
       "script": "./p3-low-95.js",
       "title": "The strange world of sight 奇异的视觉世界",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/184. P3 - The strange world of sight 奇异的视觉世界/",
       "filename": "184. P3 - The strange world of sight 奇异的视觉世界.html",
@@ -12573,7 +12743,7 @@ storageManager.ready
       "title": "[Pretest] Why Do We Need Sleep 睡眠的目的",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/185. [Pretest] P2 - Why Do We Need Sleep 睡眠的目的/",
       "filename": "185. [Pretest] P2 - Why Do We Need Sleep 睡眠的目的.html",
       "hasHtml": true,
@@ -12588,7 +12758,7 @@ storageManager.ready
       "title": "Saving languages 拯救濒危语言",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/186. P3 - Saving languages 拯救濒危语言/",
       "filename": "186. P3 - Saving languages 拯救濒危语言.html",
       "hasHtml": true,
@@ -12617,7 +12787,7 @@ storageManager.ready
       "script": "./p1-low-99.js",
       "title": "The history of the bar code 条形码的历史",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/188. P1 - The history of the bar code 条形码的历史/",
       "filename": "188. P1 - The history of the bar code 条形码的历史.html",
@@ -12633,7 +12803,7 @@ storageManager.ready
       "title": "Mirror 镜子研究",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/189. P3 - Mirror 镜子研究/",
       "filename": "189. P3 - Mirror 镜子研究.html",
       "hasHtml": true,
@@ -12648,7 +12818,7 @@ storageManager.ready
       "title": "The Impact of the Potato 土豆的影响",
       "category": "P1",
       "frequency": "高频",
-      "difficultyScore": 1,
+      "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/19. P1 - The Impact of the Potato 土豆的影响【高】/",
       "filename": "19. P1 - The Impact of the Potato 土豆的影响【高】.html",
       "hasHtml": true,
@@ -12663,7 +12833,7 @@ storageManager.ready
       "title": "The power of music 音乐的力量",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/190. P2 - The power of music 音乐的力量/",
       "filename": "190. P2 - The power of music 音乐的力量.html",
       "hasHtml": true,
@@ -12677,8 +12847,8 @@ storageManager.ready
       "script": "./p2-low-103.js",
       "title": "The economic effect of climate 气候对经济的影响",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/191. P2 - The economic effect of climate 气候对经济的影响/",
       "filename": "191. P2 - The economic effect of climate 气候对经济的影响.html",
       "hasHtml": true,
@@ -12737,8 +12907,8 @@ storageManager.ready
       "script": "./p1-low-107.js",
       "title": "The life of Beatrix Potter 彼得兔作家",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/21. P1 - The life of Beatrix Potter 彼得兔作家/",
       "filename": "21. P1 - The life of Beatrix Potter 彼得兔作家.html",
       "hasHtml": true,
@@ -12753,7 +12923,7 @@ storageManager.ready
       "title": "The nature of Yawning 打哈欠的本质",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/22. P1 - The nature of Yawning 打哈欠的本质/",
       "filename": "22. P1 - The nature of Yawning 打哈欠的本质.html",
       "hasHtml": true,
@@ -12767,8 +12937,8 @@ storageManager.ready
       "script": "./p1-low-109.js",
       "title": "The Origin of Paper 造纸术起源",
       "category": "P1",
-      "frequency": "次高频",
-      "difficultyScore": 2.5,
+      "frequency": "高频",
+      "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/23. P1 - The Origin of Paper 造纸术起源/",
       "filename": "23. P1 - The Origin of Paper 造纸术起源.html",
       "hasHtml": true,
@@ -12798,7 +12968,7 @@ storageManager.ready
       "title": "The Rise and Fall of Detective Stories 侦探小说的兴衰",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/25. P1 - The Rise and Fall of Detective Stories 侦探小说的兴衰/",
       "filename": "25. P1 - The Rise and Fall of Detective Stories 侦探小说的兴衰.html",
       "hasHtml": true,
@@ -12813,7 +12983,7 @@ storageManager.ready
       "title": "The Tuatara of New Zealand 新西兰蜥蜴",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/26. P1 - The Tuatara of New Zealand 新西兰蜥蜴/",
       "filename": "26. P1 - The Tuatara of New Zealand 新西兰蜥蜴.html",
       "hasHtml": true,
@@ -12827,8 +12997,8 @@ storageManager.ready
       "script": "./p1-low-113.js",
       "title": "Thomas Young The last man who knew everything 托马斯·杨",
       "category": "P1",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/27. P1 - Thomas Young The last man who knew everything 托马斯·杨/",
       "filename": "27. P1 - Thomas Young The last man who knew everything 托马斯·杨.html",
       "hasHtml": true,
@@ -12842,8 +13012,8 @@ storageManager.ready
       "script": "./p1-low-114.js",
       "title": "Triumph of the City 城市的胜利",
       "category": "P1",
-      "frequency": "高频",
-      "difficultyScore": 1.5,
+      "frequency": "次高频",
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/28. P1 - Triumph of the City 城市的胜利/",
       "filename": "28. P1 - Triumph of the City 城市的胜利.html",
       "hasHtml": true,
@@ -12873,7 +13043,7 @@ storageManager.ready
       "title": "Advertising Needs Attention 广告的吸引力",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/3. P1 - Advertising Needs Attention 广告的吸引力/",
       "filename": "3. P1 - Advertising Needs Attention 广告的吸引力.html",
       "hasHtml": true,
@@ -12887,7 +13057,7 @@ storageManager.ready
       "script": "./p1-medium-117.js",
       "title": "What Lucy Taught Us 露西化石",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/30. P1 - What Lucy Taught Us 露西化石【次】/",
       "filename": "30. P1 - What Lucy Taught Us 露西化石【次】.html",
@@ -12917,7 +13087,7 @@ storageManager.ready
       "script": "./p1-medium-119.js",
       "title": "Wood 新西兰木材产业",
       "category": "P1",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/32. P1 - Wood 新西兰木材产业【次】/",
       "filename": "32. P1 - Wood 新西兰木材产业【次】.html",
@@ -12962,7 +13132,7 @@ storageManager.ready
       "script": "./p2-low-122.js",
       "title": "Biophilic Design 亲自然设计",
       "category": "P2",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/35. P2 - Biophilic Design 亲自然设计/",
       "filename": "35. P2 - Biophilic Design 亲自然设计.html",
@@ -12992,8 +13162,8 @@ storageManager.ready
       "script": "./p2-high-124.js",
       "title": "Corporate Social Responsibility  企业社会责任",
       "category": "P2",
-      "frequency": "次高频",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/37. P2 - Corporate Social Responsibility  企业社会责任【高】/",
       "filename": "37. P2 - Corporate Social Responsibility  企业社会责任【高】.html",
       "hasHtml": true,
@@ -13008,7 +13178,7 @@ storageManager.ready
       "title": "Egypt’s ancient boat-builders 古埃及造船",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/38. P2 - Egypt’s ancient boat-builders 古埃及造船/",
       "filename": "38. P2 - Egypt’s ancient boat-builders 古埃及造船.html",
       "hasHtml": true,
@@ -13023,7 +13193,7 @@ storageManager.ready
       "title": "How are deserts formed 沙漠成因",
       "category": "P2",
       "frequency": "高频",
-      "difficultyScore": 3,
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/39. P2 - How are deserts formed 沙漠成因【次】/",
       "filename": "39. P2 - How are deserts formed 沙漠成因【次】.html",
       "hasHtml": true,
@@ -13037,7 +13207,7 @@ storageManager.ready
       "script": "./p1-low-127.js",
       "title": "Ambergris 龙涎香",
       "category": "P1",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/4. P1 - Ambergris 龙涎香/",
       "filename": "4. P1 - Ambergris 龙涎香.html",
@@ -13052,8 +13222,8 @@ storageManager.ready
       "script": "./p2-high-128.js",
       "title": "How Well Do We Concentrate_  多任务处理",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/40. P2 - How Well Do We Concentrate_  多任务处理【高】/",
       "filename": "40. P2 - How Well Do We Concentrate_  多任务处理【高】.html",
       "hasHtml": true,
@@ -13067,7 +13237,7 @@ storageManager.ready
       "script": "./p2-medium-129.js",
       "title": "Intelligent behaviour in birds 鸟类智慧行为",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/41. P2 - Intelligent behaviour in birds 鸟类智慧行为【次】/",
       "filename": "41. P2 - Intelligent behaviour in birds 鸟类智慧行为【次】.html",
@@ -13082,8 +13252,8 @@ storageManager.ready
       "script": "./p2-high-130.js",
       "title": "Investment in shares versus investment in other assets 回报数据分析",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/42. P2 - Investment in shares versus investment in other assets 回报数据分析【高】/",
       "filename": "42. P2 - Investment in shares versus investment in other assets 回报数据分析【高】.html",
       "hasHtml": true,
@@ -13113,7 +13283,7 @@ storageManager.ready
       "title": "Orientation of Birds 鸟类的定位能力",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/44. P2 - Orientation of Birds 鸟类的定位能力/",
       "filename": "44. P2 - Orientation of Birds 鸟类的定位能力.html",
       "hasHtml": true,
@@ -13157,8 +13327,8 @@ storageManager.ready
       "script": "./p2-low-135.js",
       "title": "Skyscraper Farming 摩天大楼种植",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/47. P2 - Skyscraper Farming 摩天大楼种植/",
       "filename": "47. P2 - Skyscraper Farming 摩天大楼种植.html",
       "hasHtml": true,
@@ -13187,8 +13357,8 @@ storageManager.ready
       "script": "./p2-high-137.js",
       "title": "Surviving city life 动物适应城市",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/49. P2 - Surviving city life 动物适应城市【高】/",
       "filename": "49. P2 - Surviving city life 动物适应城市【高】.html",
       "hasHtml": true,
@@ -13203,7 +13373,7 @@ storageManager.ready
       "title": "Australian artist Margaret Preston 澳大利亚艺术家",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/5. P1 - Australian artist Margaret Preston 澳大利亚艺术家/",
       "filename": "5. P1 - Australian artist Margaret Preston 澳大利亚艺术家.html",
       "hasHtml": true,
@@ -13217,7 +13387,7 @@ storageManager.ready
       "script": "./p2-high-139.js",
       "title": "The conquest of malaria in Italy 意大利疟疾防治",
       "category": "P2",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/50. P2 - The conquest of malaria in Italy 意大利疟疾防治【高】/",
       "filename": "50. P2 - The conquest of malaria in Italy 意大利疟疾防治【高】.html",
@@ -13262,7 +13432,7 @@ storageManager.ready
       "script": "./p2-low-142.js",
       "title": "The fashion industry 时尚产业",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/53. P2 - The fashion industry 时尚产业/",
       "filename": "53. P2 - The fashion industry 时尚产业.html",
@@ -13277,8 +13447,8 @@ storageManager.ready
       "script": "./p2-low-143.js",
       "title": "The impact of invasive species 入侵物种的影响",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/54. P2 - The impact of invasive species 入侵物种的影响/",
       "filename": "54. P2 - The impact of invasive species 入侵物种的影响.html",
       "hasHtml": true,
@@ -13307,7 +13477,7 @@ storageManager.ready
       "script": "./p2-high-145.js",
       "title": "The return of monkey life 猴群回归",
       "category": "P2",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/56. P2 - The return of monkey life 猴群回归【高】/",
       "filename": "56. P2 - The return of monkey life 猴群回归【高】.html",
@@ -13337,8 +13507,8 @@ storageManager.ready
       "script": "./p2-low-147.js",
       "title": "Who wrote Shakespeare's plays 莎士比亚",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/58. P2 - Who wrote Shakespeare's plays 莎士比亚/",
       "filename": "58. P2 - Who wrote Shakespeare's plays 莎士比亚.html",
       "hasHtml": true,
@@ -13353,7 +13523,7 @@ storageManager.ready
       "title": "Why do we need the arts_ 艺术的意义",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/59. P2 - Why do we need the arts_ 艺术的意义/",
       "filename": "59. P2 - Why do we need the arts_ 艺术的意义.html",
       "hasHtml": true,
@@ -13368,7 +13538,7 @@ storageManager.ready
       "title": "Categorizing societies 社会分类",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 2,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/6. P1 - Categorizing societies 社会分类/",
       "filename": "6. P1 - Categorizing societies 社会分类html.html",
       "hasHtml": true,
@@ -13412,7 +13582,7 @@ storageManager.ready
       "script": "./p3-medium-152.js",
       "title": "Charles Darwin and Evolutionary Psychology 进化心理学",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/62. P3 - Charles Darwin and Evolutionary Psychology 进化心理学【次】/",
       "filename": "62. P3 - Charles Darwin and Evolutionary Psychology 进化心理学【次】.html",
@@ -13428,7 +13598,7 @@ storageManager.ready
       "title": "Crossing the Threshold 奥克兰美术馆",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/63. P3 - Crossing the Threshold 奥克兰美术馆/",
       "filename": "63. P3 - Crossing the Threshold 奥克兰美术馆.html",
       "hasHtml": true,
@@ -13443,7 +13613,7 @@ storageManager.ready
       "title": "Decisions, Decisions 决策之间",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/64. P3 - Decisions, Decisions 决策之间【次】/",
       "filename": "64. P3 - Decisions, Decisions 决策之间【次】.html",
       "hasHtml": true,
@@ -13457,7 +13627,7 @@ storageManager.ready
       "script": "./p3-medium-155.js",
       "title": "Does class size matter_ 课堂规模",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/65. P3 - Does class size matter_ 课堂规模【次】/",
       "filename": "65. P3 - Does class size matter_ 课堂规模【次】.html",
@@ -13487,8 +13657,8 @@ storageManager.ready
       "script": "./p3-high-157.js",
       "title": "Flower Power 鲜花的力量(花之力)",
       "category": "P3",
-      "frequency": "次高频",
-      "difficultyScore": 3.5,
+      "frequency": "高频",
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/67. P3 - Flower Power 鲜花的力量(花之力)【高】/",
       "filename": "67. P3 - Flower Power 鲜花的力量(花之力)【高】.html",
       "hasHtml": true,
@@ -13503,7 +13673,7 @@ storageManager.ready
       "title": "Game theory 博弈论",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/68. P3 - Game theory 博弈论/",
       "filename": "68. P3 - Game theory 博弈论.html",
       "hasHtml": true,
@@ -13518,7 +13688,7 @@ storageManager.ready
       "title": "Grimm’s Fairy Tales 格林童话",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/69. P3 - Grimm’s Fairy Tales 格林童话【高】/",
       "filename": "69. P3 - Grimm’s Fairy Tales 格林童话【高】.html",
       "hasHtml": true,
@@ -13533,7 +13703,7 @@ storageManager.ready
       "title": "Chili peppers 辣椒的历史",
       "category": "P1",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 2.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/7. P1 - Chili peppers 辣椒的历史/",
       "filename": "7. P1 - Chili peppers 辣椒的历史.html",
       "hasHtml": true,
@@ -13578,7 +13748,7 @@ storageManager.ready
       "title": "Keeping the Fun in Funfairs 游乐场设计科学",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/72. P3 - Keeping the Fun in Funfairs 游乐场设计科学/",
       "filename": "72. P3 - Keeping the Fun in Funfairs 游乐场设计科学.html",
       "hasHtml": true,
@@ -13593,7 +13763,7 @@ storageManager.ready
       "title": "Language Strategy in Multinational Companies 跨国公司语言策略",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略【高】/",
       "filename": "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略【高】.html",
       "hasHtml": true,
@@ -13608,7 +13778,7 @@ storageManager.ready
       "title": "Let’s teach them how to teach 教他们如何教学",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/74. P3 - Let’s teach them how to teach 教他们如何教学/",
       "filename": "74. P3 - Let’s teach them how to teach 教他们如何教学.html",
       "hasHtml": true,
@@ -13622,8 +13792,8 @@ storageManager.ready
       "script": "./p3-low-166.js",
       "title": "Life on Mars_ 火星地球化改造",
       "category": "P3",
-      "frequency": "次高频",
-      "difficultyScore": 4,
+      "frequency": "高频",
+      "difficultyScore": 4.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/75. P3 - Life on Mars_ 火星地球化改造/",
       "filename": "75. P3 - Life on Mars_ 火星地球化改造.html",
       "hasHtml": true,
@@ -13652,7 +13822,7 @@ storageManager.ready
       "script": "./p3-medium-168.js",
       "title": "Marketing and the information age 信息时代营销",
       "category": "P3",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/77. P3 - Marketing and the information age 信息时代营销【次】/",
       "filename": "77. P3 - Marketing and the information age 信息时代营销【次】.html",
@@ -13683,7 +13853,7 @@ storageManager.ready
       "title": "Pacific Navigation and Voyaging 太平洋航海",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/79. P3 - Pacific Navigation and Voyaging 太平洋航海【高】/",
       "filename": "79. P3 - Pacific Navigation and Voyaging 太平洋航海【高】.html",
       "hasHtml": true,
@@ -13772,8 +13942,8 @@ storageManager.ready
       "script": "./p3-medium-176.js",
       "title": "The Analysis of Fear 猴子恐惧实验",
       "category": "P3",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/84. P3 - The Analysis of Fear 猴子恐惧实验【次】/",
       "filename": "84. P3 - The Analysis of Fear 猴子恐惧实验【次】.html",
       "hasHtml": true,
@@ -13803,7 +13973,7 @@ storageManager.ready
       "title": "The benefits of learning an instrument 学乐器的好处",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/86. P3 - The benefits of learning an instrument 学乐器的好处【高】/",
       "filename": "86. P3 - The benefits of learning an instrument 学乐器的好处【高】.html",
       "hasHtml": true,
@@ -13818,7 +13988,7 @@ storageManager.ready
       "title": "The Exploration of Mars 火星探索",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/87. P3 - The Exploration of Mars 火星探索【次】/",
       "filename": "87. P3 - The Exploration of Mars 火星探索【次】.html",
       "hasHtml": true,
@@ -13833,7 +14003,7 @@ storageManager.ready
       "title": "The fluoridation controversy 氟化水争议",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/88. P3 - The fluoridation controversy 氟化水争议【高】/",
       "filename": "88. P3 - The fluoridation controversy 氟化水争议【高】.html",
       "hasHtml": true,
@@ -13862,7 +14032,7 @@ storageManager.ready
       "script": "./p1-medium-182.js",
       "title": "Listening to the Ocean 海洋探测",
       "category": "P1",
-      "frequency": "高频",
+      "frequency": "次高频",
       "difficultyScore": 3,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/9. P1 - Listening to the Ocean 海洋探测【次】/",
       "filename": "9. P1 - Listening to the Ocean 海洋探测【次】.html",
@@ -13877,7 +14047,7 @@ storageManager.ready
       "script": "./p3-medium-183.js",
       "title": "The hazards of multitasking 多任务处理",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "low",
       "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/90. P3 - The hazards of multitasking 多任务处理【次】/",
       "filename": "90. P3 - The hazards of multitasking 多任务处理【次】.html",
@@ -13908,7 +14078,7 @@ storageManager.ready
       "title": "The Pirahã people of Brazil  巴西皮拉罕部落语言",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/92. P3 - The Pirahã people of Brazil  巴西皮拉罕部落语言【次】/",
       "filename": "92. P3 - The Pirahã people of Brazil  巴西皮拉罕部落语言【次】.html",
       "hasHtml": true,
@@ -13938,7 +14108,7 @@ storageManager.ready
       "title": "The science of sleep 睡眠的科学",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/94. P3 - The science of sleep 睡眠的科学/",
       "filename": "94. P3 - The science of sleep 睡眠的科学.pdf.html",
       "hasHtml": true,
@@ -13983,7 +14153,7 @@ storageManager.ready
       "title": "The value of literary prizes 文学奖项的价值",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 5,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/97. P3 - The value of literary prizes 文学奖项的价值/",
       "filename": "97. P3 - The value of literary prizes 文学奖项的价值.html",
       "hasHtml": true,
@@ -13998,7 +14168,7 @@ storageManager.ready
       "title": "Video Games’ Unexpected Benefits to the Human Brain 电子游戏的好处",
       "category": "P3",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "睡着过项目组/2. 所有文章(11.20)[192篇]/98. P3 - Video Games’ Unexpected Benefits to the Human Brain 电子游戏的好处【次】/",
       "filename": "98. P3 - Video Games’ Unexpected Benefits to the Human Brain 电子游戏的好处【次】.html",
       "hasHtml": true,
@@ -14032,7 +14202,7 @@ storageManager.ready
       "path": "三月/1.P1 高频/",
       "filename": "200. P1 - Australia’s Airborne Dentists 澳洲飞行牙医【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/200. P1 - Australia’s Airborne Dentists 澳洲飞行牙医.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14047,7 +14217,7 @@ storageManager.ready
       "path": "三月/1.P1 高频/",
       "filename": "211. P1 - Ahead of its time 新西兰头骨【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/211. P1 - Ahead of its time 新西兰头骨.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14062,7 +14232,7 @@ storageManager.ready
       "path": "三月/1.P1 高频/",
       "filename": "216. P1 - Australia’s cane toad problem 澳洲蟾蜍【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/216. P1 - Australia’s cane toad problem 澳洲蟾蜍.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14077,7 +14247,7 @@ storageManager.ready
       "path": "三月/2.P1 次高频/",
       "filename": "194. P1 - The history of the British wool industry 英国羊毛产业的历史【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/194. P1 - The history of the British wool industry 英国羊毛产业的历史.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14092,7 +14262,7 @@ storageManager.ready
       "path": "三月/",
       "filename": "222. P2 - Ideal Homes 理想居所.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/222. P2 - Ideal Homes 理想居所.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14103,11 +14273,11 @@ storageManager.ready
       "title": "Effect and Cause 湖泊海啸研究",
       "category": "P1",
       "frequency": "次高频",
-      "difficultyScore": 3.5,
+      "difficultyScore": 3,
       "path": "三月/",
       "filename": "223. P1 - Effect and Cause 湖泊海啸研究.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/223. P1 - Effect and Cause 湖泊海啸研究.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14122,7 +14292,7 @@ storageManager.ready
       "path": "三月/3.P2 高频/",
       "filename": "201. P2 - Multi-tasking and the brain 大脑与多任务处理【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/201. P2 - Multi-tasking and the brain 大脑与多任务处理.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14132,12 +14302,12 @@ storageManager.ready
       "script": "./p2-medium-217.js",
       "title": "A mechanical friend for children 孩子的机器人朋友",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "三月/3.P2 高频/",
       "filename": "217. P2 - A mechanical friend for children 孩子的机器人朋友【次】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/217. P2 - A mechanical friend for children 孩子的机器人朋友.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14152,7 +14322,7 @@ storageManager.ready
       "path": "三月/4.P2 次高频/",
       "filename": "192. P2(1115纸笔) - Should we stop eating meat 是否应该吃素【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/192. P2(1115纸笔) - Should we stop eating meat 是否应该吃素.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14162,12 +14332,12 @@ storageManager.ready
       "script": "./p2-medium-209.js",
       "title": "Decision Fatigue 决策疲劳",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "三月/4.P2 次高频/",
       "filename": "209. P2 - Decision Fatigue 决策疲劳【次】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/209. P2 - Decision Fatigue 决策疲劳.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14182,7 +14352,7 @@ storageManager.ready
       "path": "三月/4.P2 次高频/",
       "filename": "213. P2 - Growing more for less 卫星农业【次】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/213. P2 - Growing more for less 卫星农业.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14193,11 +14363,11 @@ storageManager.ready
       "title": "The dingo debate 澳洲野犬_澳洲野狗",
       "category": "P2",
       "frequency": "low",
-      "difficultyScore": null,
+      "difficultyScore": 3.5,
       "path": "三月/4.P2 次高频/",
       "filename": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14207,12 +14377,12 @@ storageManager.ready
       "script": "./p2-medium-058.js",
       "title": "Who wrote Shakespeare's plays 莎士比亚",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 4,
       "path": "三月/4.P2 次高频/",
       "filename": "58. P2 - Who wrote Shakespeare's plays 莎士比亚【次】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/58. P2 - Who wrote Shakespeare's plays 莎士比亚.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14227,7 +14397,7 @@ storageManager.ready
       "path": "三月/5.P3 高频/",
       "filename": "204. P3 - When people are ‘deaf’ to music 失乐症【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/204. P3 - When people are ‘deaf’ to music 失乐症.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14242,7 +14412,7 @@ storageManager.ready
       "path": "三月/5.P3 高频/",
       "filename": "206. P3 - 200 Years of Australian Landscapes at the Royal Academy in London 亚洲风景展【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/206. P3 - 200 Years of Australian Landscapes at the Royal Academy in London 澳洲风景展.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14257,7 +14427,7 @@ storageManager.ready
       "path": "三月/5.P3 高频/",
       "filename": "212. P3 - Children’s literature studies today 儿童文学【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/212. P3 - Children’s literature studies today 儿童文学.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14267,12 +14437,12 @@ storageManager.ready
       "script": "./p3-high-218.js",
       "title": "The Causes of Linguistic Change 语音的演变",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4.5,
       "path": "三月/5.P3 高频/",
       "filename": "218. P3 - The Causes of Linguistic Change 语音的演变【高】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/218. P3 - The Causes of Linguistic Change 语音的演变.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14282,12 +14452,12 @@ storageManager.ready
       "script": "./p3-low-219.js",
       "title": "The origin of language 语言的起源",
       "category": "P3",
-      "frequency": "高频",
-      "difficultyScore": 4,
+      "frequency": "次高频",
+      "difficultyScore": 4.5,
       "path": "三月/5.P3 高频/",
       "filename": "219. P3 - The origin of language 语言的起源.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/219. P3 - The origin of language 语言的起源.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14297,13 +14467,13 @@ storageManager.ready
       "script": "./p3-low-999.js",
       "title": "Risk taking",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "三月/5.P3 高频/",
       "filename": "P3 - Risk taking.html",
       "hasHtml": true,
-      "hasPdf": false,
-      "pdfFilename": "",
+      "hasPdf": true,
+      "pdfFilename": "ReadingPractice/PDF/P3 - Risk taking.pdf",
       "sourceKind": "generated-reading"
     },
     "p3-medium-197": {
@@ -14312,12 +14482,12 @@ storageManager.ready
       "script": "./p3-medium-197.js",
       "title": "Australia’s Megafauna Controversy 巨兽灭绝",
       "category": "P3",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4.5,
       "path": "三月/6.P3 次高频/",
       "filename": "197. P3 - Australia’s Megafauna Controversy 巨兽灭绝【次】.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/197. P3 - Australia’s Megafauna Controversy 巨兽灭绝.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14328,11 +14498,11 @@ storageManager.ready
       "title": "Child’s Play in Medieval England 中世纪的游戏",
       "category": "P3",
       "frequency": "次高频",
-      "difficultyScore": 4,
+      "difficultyScore": 4.5,
       "path": "三月/6.P3 次高频/",
       "filename": "198. P3 - Child’s Play in Medieval England 中世纪的游戏.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/198. P3 - Child’s Play in Medieval England 中世纪的游戏.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14347,7 +14517,7 @@ storageManager.ready
       "path": "三月/6.P3 次高频/",
       "filename": "78. P3 (ds做出来的) - Music Language We All Speak 音乐语言.html",
       "hasHtml": true,
-      "hasPdf": false,
+      "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/78. P3 (仅原文无题) - Music Language We All Speak 音乐语言.pdf",
       "sourceKind": "generated-reading"
     },
@@ -14357,7 +14527,7 @@ storageManager.ready
       "script": "./p1-high-227.js",
       "title": "The Whale Goes to Court 鲸鱼油",
       "category": "P1",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 3,
       "path": "ReadingPractice/PDF/",
       "filename": "227. P1 - The Whale Goes to Court 鲸鱼油.pdf",
@@ -14373,7 +14543,7 @@ storageManager.ready
       "title": "The problem of graffiti 涂鸦之困",
       "category": "P2",
       "frequency": "高频",
-      "difficultyScore": 3.5,
+      "difficultyScore": 4,
       "path": "ReadingPractice/PDF/",
       "filename": "225. P2 - The problem of graffiti 涂鸦之困.pdf",
       "hasHtml": true,
@@ -14447,7 +14617,7 @@ storageManager.ready
       "script": "./p2-high-232.js",
       "title": "The origin and development of applause 掌声的历史",
       "category": "P2",
-      "frequency": "次高频",
+      "frequency": "高频",
       "difficultyScore": 4,
       "path": "ReadingPractice/PDF/",
       "filename": "232. P2 - The origin and development of applause 掌声的历史.pdf",
@@ -14463,7 +14633,7 @@ storageManager.ready
       "title": "Why don’t we sleep 失眠的原因",
       "category": "P2",
       "frequency": "高频",
-      "difficultyScore": 3,
+      "difficultyScore": 3.5,
       "path": "ReadingPractice/PDF/",
       "filename": "233. P2 - Why don’t we sleep 失眠的原因.pdf",
       "hasHtml": true,
@@ -14478,7 +14648,7 @@ storageManager.ready
       "title": "How do plants talk to each other 植物交流",
       "category": "P2",
       "frequency": "高频",
-      "difficultyScore": 4,
+      "difficultyScore": 3.5,
       "path": "ReadingPractice/PDF/",
       "filename": "234. P2 - The Secret Language of Plants 植物交流.pdf",
       "hasHtml": true,
@@ -14493,7 +14663,7 @@ storageManager.ready
       "title": "The Animal Connection 动物联结",
       "category": "P3",
       "frequency": "次高频",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "ReadingPractice/PDF/",
       "filename": "221. P3 - The Animal Connection 动物联结.pdf",
       "hasHtml": true,
@@ -14508,7 +14678,7 @@ storageManager.ready
       "title": "The return of the black-footed ferret 黑足鼬",
       "category": "P2",
       "frequency": "高频",
-      "difficultyScore": null,
+      "difficultyScore": 3,
       "path": "ReadingPractice/PDF/",
       "filename": "235. P2 - The return of the black-footed ferret 黑足鼬.pdf",
       "hasHtml": true,
@@ -14522,13 +14692,13 @@ storageManager.ready
       "script": "./p2-high-236.js",
       "title": "War of the Plants 植物的战争",
       "category": "P2",
-      "frequency": "高频",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 4,
       "path": "",
       "filename": "",
       "hasHtml": true,
-      "hasPdf": false,
-      "pdfFilename": "",
+      "hasPdf": true,
+      "pdfFilename": "ReadingPractice/PDF/P2 - War of the Plants.pdf",
       "sourceKind": "generated-reading"
     },
     "p3-high-229": {
@@ -14538,7 +14708,7 @@ storageManager.ready
       "title": "All in the family 兄弟姐妹的影响",
       "category": "P3",
       "frequency": "高频",
-      "difficultyScore": null,
+      "difficultyScore": 4,
       "path": "ReadingPractice/PDF/",
       "filename": "237. P3 - All in the family 兄弟姐妹的影响.pdf",
       "hasHtml": true,
@@ -14552,8 +14722,8 @@ storageManager.ready
       "script": "./p2-high-239.js",
       "title": "Nanotechnology: the science of the very small 纳米科技",
       "category": "P2",
-      "frequency": "高频",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3.5,
       "path": "ReadingPractice/PDF/",
       "filename": "239. P2 - Nanotechnology the science of the very small 纳米科技.pdf",
       "hasHtml": true,
@@ -14567,13 +14737,13 @@ storageManager.ready
       "script": "./p2-low-240.js",
       "title": "Coins - the first form of money 硬币起源",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "次高频",
+      "difficultyScore": 3,
       "path": "assets/generated/reading-exams/",
       "filename": "reading-practice-unified.html",
       "hasHtml": true,
-      "hasPdf": false,
-      "pdfFilename": "",
+      "hasPdf": true,
+      "pdfFilename": "ReadingPractice/PDF/P2 - Coins – the first form of money.pdf",
       "sourceKind": "generated-reading"
     },
     "p1-high-240": {
@@ -14582,8 +14752,8 @@ storageManager.ready
       "script": "./p1-high-240.js",
       "title": "The Origins of Weather Forecasting 天气预报",
       "category": "P1",
-      "frequency": "high",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 2.5,
       "path": "ReadingPractice/PDF/",
       "filename": "240. P1 - The Origins of Weather Forecasting 天气预报.pdf",
       "hasHtml": true,
@@ -14597,8 +14767,8 @@ storageManager.ready
       "script": "./p2-low-242.js",
       "title": "Walking and shoes in eighteenth-century London 伦敦鞋子的发展史",
       "category": "P2",
-      "frequency": "low",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 3.5,
       "path": "ReadingPractice/PDF/",
       "filename": "242. P2 - Walking and shoes in eighteenth-century London 伦敦鞋子的发展史.pdf",
       "hasHtml": true,
@@ -14627,15 +14797,45 @@ storageManager.ready
       "script": "./p3-medium-241.js",
       "title": "Who looks after the children in today's Britain? 育儿分工",
       "category": "P3",
-      "frequency": "medium",
-      "difficultyScore": null,
+      "frequency": "高频",
+      "difficultyScore": 4,
       "path": "ReadingPractice/PDF/",
       "filename": "P3 - Who looks after the children in today's Britain.pdf",
       "hasHtml": true,
       "hasPdf": true,
       "pdfFilename": "ReadingPractice/PDF/P3 - Who looks after the children in today's Britain.pdf",
       "sourceKind": "generated-reading"
-    }
+    },
+  "p2-medium-243": {
+    "examId": "p2-medium-243",
+    "dataKey": "p2-medium-243",
+    "script": "./p2-medium-243.js",
+    "title": "The internal body clock",
+    "category": "P2",
+    "frequency": "次高频",
+    "difficultyScore": 3.5,
+    "path": "",
+    "filename": "",
+    "hasHtml": true,
+    "hasPdf": true,
+    "pdfFilename": "ReadingPractice/PDF/P2 - The internal body clock 生物钟.pdf",
+    "sourceKind": "generated-reading"
+  },
+  "p3-medium-244": {
+    "examId": "p3-medium-244",
+    "dataKey": "p3-medium-244",
+    "script": "./p3-medium-244.js",
+    "title": "Look who was talking",
+    "category": "P3",
+    "frequency": "次高频",
+    "difficultyScore": 4,
+    "path": "",
+    "filename": "",
+    "hasHtml": true,
+    "hasPdf": true,
+    "pdfFilename": "ReadingPractice/PDF/P3 - Look who was talking.pdf",
+    "sourceKind": "generated-reading"
+  }
   };
 
   function clonePathRoot() {
@@ -15109,6 +15309,62 @@ if (typeof module !== 'undefined' && module.exports) {
         };
     }
 
+    function normalizeFrequencyBucket(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw || raw === 'unknown' || raw === '未知频率') {
+            return '';
+        }
+        if (raw === 'low' || raw === '低频') {
+            return 'low';
+        }
+        if (raw === 'medium' || raw === 'mid' || raw === '中频' || raw === 'very-high' || raw === '次高频') {
+            return 'medium';
+        }
+        if (raw === 'high' || raw === '高频' || raw === 'ultra-high' || raw === '超高频') {
+            return 'high';
+        }
+        return '';
+    }
+
+    function normalizeCustomSuiteFrequencyScope(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (raw === 'high' || raw === 'only_high' || raw === '仅高频' || raw === '高频') {
+            return 'high';
+        }
+        if (
+            raw === 'high_medium'
+            || raw === 'high-medium'
+            || raw === 'highmedium'
+            || raw === 'high+medium'
+            || raw === '高频+次高频'
+            || raw === '高频次高频'
+        ) {
+            return 'high_medium';
+        }
+        if (raw === 'custom') {
+            return 'custom';
+        }
+        return 'all';
+    }
+
+    function isCustomSuiteFrequencyAllowed(exam, scope) {
+        const normalizedScope = normalizeCustomSuiteFrequencyScope(scope);
+        if (normalizedScope === 'all' || normalizedScope === 'custom') {
+            return true;
+        }
+        const bucket = normalizeFrequencyBucket(exam && exam.frequency);
+        if (!bucket) {
+            return normalizedScope === 'all' || normalizedScope === 'custom';
+        }
+        if (normalizedScope === 'high') {
+            return bucket === 'high';
+        }
+        if (normalizedScope === 'high_medium') {
+            return bucket === 'high' || bucket === 'medium';
+        }
+        return true;
+    }
+
     function getCustomSuiteCategories(value) {
         const categories = value && Array.isArray(value.categories) && value.categories.length
             ? value.categories.slice()
@@ -15532,6 +15788,12 @@ if (typeof module !== 'undefined' && module.exports) {
 
             const normalizedExam = cloneCustomSuiteExam(exam);
             if (!normalizedExam || !normalizedExam.examId) {
+                return this.state.customSuiteDraft;
+            }
+            const activeScope = (this.state.customSuiteDraft && this.state.customSuiteDraft.frequencyScope)
+                || options.frequencyScope
+                || 'custom';
+            if (!isCustomSuiteFrequencyAllowed(normalizedExam, activeScope)) {
                 return this.state.customSuiteDraft;
             }
 

@@ -2,8 +2,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 import argparse
+import html
 import json
+import math
 import os
+import re
 import sqlite3
 import time
 
@@ -281,13 +284,39 @@ def record_contains_questions(record, question_ids, target_exam_id=""):
     return False
 
 
+def add_wrong_reason_category(categories, value):
+    for item in re.split(r"[、,，;；|/]+", str(value or "")):
+        category = item.strip()
+        if category and category not in categories:
+            categories.append(category)
+
+
+def normalize_wrong_reason_categories(value):
+    source = value if isinstance(value, dict) else {"category": value}
+    categories = []
+    if isinstance(source.get("categories"), list):
+        for item in source.get("categories"):
+            add_wrong_reason_category(categories, item)
+    add_wrong_reason_category(categories, source.get("category"))
+    add_wrong_reason_category(categories, source.get("reason"))
+    add_wrong_reason_category(categories, source.get("type"))
+    return categories
+
+
+def wrong_reason_categories_equal(left, right):
+    left_categories = normalize_wrong_reason_categories(left)
+    right_categories = normalize_wrong_reason_categories(right)
+    return len(left_categories) == len(right_categories) and all(category in right_categories for category in left_categories)
+
+
 def normalize_wrong_reason(value):
     source = value if isinstance(value, dict) else {"category": value}
-    category = str(source.get("category") or source.get("reason") or source.get("type") or "").strip()
+    categories = normalize_wrong_reason_categories(source)
+    category = categories[0] if categories else ""
     note = str(source.get("note") or source.get("detail") or source.get("text") or "").strip()
     if not category and not note:
         return None
-    return {"category": category, "note": note, "updatedAt": source.get("updatedAt") or now_iso()}
+    return {"category": category, "categories": categories, "note": note, "updatedAt": source.get("updatedAt") or now_iso()}
 
 
 def collect_wrong_reasons(record, include_suite_entries=False):
@@ -498,7 +527,7 @@ def apply_wrong_reason_update(record, wrong_reasons, payload):
     metadata["wrongReasonUpdatedAt"] = payload.get("updatedAt") or now_iso()
     if real_data is not None:
         real_data["wrongReasonUpdatedAt"] = metadata["wrongReasonUpdatedAt"]
-    return next_record
+    return repair_record_score_fields(next_record)
 
 
 def record_has_wrong_reasons(record, wrong_reasons, payload):
@@ -511,11 +540,68 @@ def record_has_wrong_reasons(record, wrong_reasons, payload):
         persisted_reason = normalize_wrong_reason(persisted.get(question_id))
         if not persisted_reason:
             return False
-        if persisted_reason.get("category") != expected_reason.get("category"):
+        if not wrong_reason_categories_equal(persisted_reason, expected_reason):
             return False
         if persisted_reason.get("note") != expected_reason.get("note"):
             return False
     return True
+
+
+def repair_record_score_fields(record):
+    if not isinstance(record, dict):
+        return record
+    score_info = record.get("scoreInfo") if isinstance(record.get("scoreInfo"), dict) else {}
+    def number_or_none(*values):
+        for value in values:
+            try:
+                if value is None or value == "":
+                    continue
+                numeric = float(value)
+                if math.isfinite(numeric):
+                    return numeric
+            except Exception:
+                continue
+        return None
+
+    score = number_or_none(record.get("score"), score_info.get("score"), score_info.get("correct"), record.get("correctAnswers"))
+    total = number_or_none(record.get("totalQuestions"), score_info.get("total"), score_info.get("totalQuestions"))
+    accuracy = number_or_none(record.get("accuracy"), score_info.get("accuracy"))
+    if (accuracy is None or accuracy <= 0) and total and total > 0 and score and score > 0:
+        accuracy = score / total
+    if accuracy is not None and accuracy > 1:
+        accuracy = accuracy / 100
+    percentage = number_or_none(record.get("percentage"), score_info.get("percentage"))
+    if (percentage is None or percentage <= 0) and accuracy and accuracy > 0:
+        percentage = round(accuracy * 100)
+    if score is not None:
+        record["score"] = int(score) if float(score).is_integer() else score
+        score_info["score"] = record["score"]
+        score_info["correct"] = record["score"]
+    if total is not None:
+        record["totalQuestions"] = int(total) if float(total).is_integer() else total
+        score_info["total"] = record["totalQuestions"]
+        score_info["totalQuestions"] = record["totalQuestions"]
+    if accuracy is not None:
+        record["accuracy"] = accuracy
+        score_info["accuracy"] = accuracy
+    if percentage is not None:
+        record["percentage"] = int(percentage) if float(percentage).is_integer() else percentage
+        score_info["percentage"] = record["percentage"]
+    if "duration" in record and "duration" not in score_info:
+        score_info["duration"] = record.get("duration")
+    if "duration" in score_info and "timeSpent" not in score_info:
+        score_info["timeSpent"] = score_info.get("duration")
+    if score_info:
+        record["scoreInfo"] = score_info
+    real_data = record.get("realData") if isinstance(record.get("realData"), dict) else None
+    if real_data is not None:
+        real_score = real_data.get("scoreInfo") if isinstance(real_data.get("scoreInfo"), dict) else {}
+        for key in ("score", "correct", "total", "totalQuestions", "accuracy", "percentage", "duration", "timeSpent"):
+            if key in score_info and key not in real_score:
+                real_score[key] = score_info[key]
+        if real_score:
+            real_data["scoreInfo"] = real_score
+    return record
 
 
 def summarize_wrong_reason_payload(payload):
@@ -589,6 +675,34 @@ def project_summary(record):
         return None
     score_info = record.get("scoreInfo") if isinstance(record.get("scoreInfo"), dict) else {}
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    def number_or_none(*values):
+        for value in values:
+            try:
+                if value is None or value == "":
+                    continue
+                numeric = float(value)
+                if math.isfinite(numeric):
+                    return numeric
+            except Exception:
+                continue
+        return None
+
+    resolved_score = number_or_none(record.get("score"), score_info.get("score"), score_info.get("correct"), record.get("correctAnswers")) or 0
+    resolved_total = number_or_none(record.get("totalQuestions"), score_info.get("total"), score_info.get("totalQuestions")) or 0
+    raw_accuracy = number_or_none(record.get("accuracy"), score_info.get("accuracy"))
+    if raw_accuracy is not None and raw_accuracy > 0:
+        resolved_accuracy = raw_accuracy / 100 if raw_accuracy > 1 else raw_accuracy
+    elif resolved_total > 0 and resolved_score > 0:
+        resolved_accuracy = resolved_score / resolved_total
+    else:
+        resolved_accuracy = raw_accuracy or 0
+    raw_percentage = number_or_none(record.get("percentage"), score_info.get("percentage"))
+    if raw_percentage is not None and raw_percentage > 0:
+        resolved_percentage = raw_percentage
+    elif resolved_accuracy > 0:
+        resolved_percentage = round(resolved_accuracy * 100)
+    else:
+        resolved_percentage = raw_percentage or 0
     return {
         "id": str(record.get("id") or record.get("sessionId") or ""),
         "sessionId": record.get("sessionId"),
@@ -603,11 +717,11 @@ def project_summary(record):
         "endTime": record.get("endTime"),
         "date": record.get("date"),
         "duration": record.get("duration", score_info.get("duration", score_info.get("timeSpent", 0))) or 0,
-        "percentage": record.get("percentage", score_info.get("percentage", 0)) or 0,
-        "accuracy": record.get("accuracy", score_info.get("accuracy", 0)) or 0,
-        "score": record.get("score", score_info.get("score", 0)) or 0,
-        "totalQuestions": record.get("totalQuestions", score_info.get("total", 0)) or 0,
-        "correctAnswers": record.get("correctAnswers", score_info.get("correct", 0)) or 0,
+        "percentage": resolved_percentage,
+        "accuracy": resolved_accuracy,
+        "score": resolved_score,
+        "totalQuestions": resolved_total,
+        "correctAnswers": score_info.get("correct", record.get("score", record.get("correctAnswers", 0))) or 0,
         "status": record.get("status") or "completed",
         "suiteMode": bool(record.get("suiteMode")),
         "suiteEntryCount": len(record.get("suiteEntries") or []) if isinstance(record.get("suiteEntries"), list) else 0,
@@ -616,13 +730,13 @@ def project_summary(record):
         "suiteSessionId": record.get("suiteSessionId") or metadata.get("suiteSessionId"),
         "questionTypePerformance": record.get("questionTypePerformance"),
         "scoreInfo": {
-            "accuracy": score_info.get("accuracy"),
+            "accuracy": resolved_accuracy,
             "duration": score_info.get("duration"),
             "timeSpent": score_info.get("timeSpent"),
-            "percentage": score_info.get("percentage"),
-            "score": score_info.get("score"),
-            "total": score_info.get("total"),
-            "correct": score_info.get("correct"),
+            "percentage": resolved_percentage,
+            "score": resolved_score,
+            "total": resolved_total,
+            "correct": score_info.get("correct", record.get("correctAnswers")),
         },
         "metadata": {
             "category": metadata.get("category") or record.get("category"),
@@ -640,6 +754,322 @@ def project_summary(record):
         "updatedAt": record.get("updatedAt"),
         "createdAt": record.get("createdAt"),
     }
+
+
+def compact_text(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def strip_html_text(markup):
+    if not markup:
+        return ""
+    text = str(markup)
+    text = re.sub(r"(?is)<(script|style|select|button)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?is)<option[^>]*>.*?</option>", " ", text)
+    text = re.sub(r"(?is)<input\b[^>]*>", " ", text)
+    text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?is)</(p|li|h[1-6]|div|tr|label)>", "\n", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n\s+", "\n", text)
+    text = re.sub(r"\n{2,}", "\n", text)
+    return text.strip()
+
+
+def load_reading_exam_dataset(content_root, exam_id):
+    final_exam_id = compact_text(exam_id)
+    if not final_exam_id:
+        raise FileNotFoundError("examId is empty")
+    source_path = Path(content_root) / "assets" / "generated" / "reading-exams" / f"{final_exam_id}.js"
+    text = source_path.read_text(encoding="utf-8")
+    marker = ".register("
+    marker_at = text.find(marker)
+    if marker_at < 0:
+        marker_at = text.find("register(")
+    if marker_at < 0:
+        raise ValueError(f"reading exam register call not found: {source_path}")
+    comma_at = text.find(",", marker_at)
+    json_start = text.find("{", comma_at)
+    if comma_at < 0 or json_start < 0:
+        raise ValueError(f"reading exam payload not found: {source_path}")
+    dataset, _ = json.JSONDecoder().raw_decode(text[json_start:])
+    if not isinstance(dataset, dict):
+        raise ValueError(f"reading exam payload is not an object: {source_path}")
+    dataset["_sourcePath"] = str(source_path)
+    return dataset
+
+
+def extract_passage(dataset):
+    passage = dataset.get("passage") if isinstance(dataset.get("passage"), dict) else {}
+    html_chunks = []
+    for block in passage.get("blocks") or []:
+        if isinstance(block, dict):
+            html_chunks.append(block.get("html") or block.get("bodyHtml") or "")
+    markup = "\n".join(str(chunk) for chunk in html_chunks if chunk)
+    headings = re.findall(r"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>", markup)
+    paragraphs = []
+    for index, match in enumerate(re.findall(r"(?is)<p[^>]*>(.*?)</p>", markup), start=1):
+        raw = match or ""
+        label_match = re.match(r"(?is)\s*<strong[^>]*>\s*([A-Z])\s*</strong>\s*", raw)
+        text = strip_html_text(raw)
+        if not text or text.lower().startswith("you should spend"):
+            continue
+        label = label_match.group(1) if label_match else None
+        if label and text.startswith(label):
+            text = text[len(label):].strip()
+        paragraphs.append({
+            "index": len(paragraphs) + 1,
+            "label": label,
+            "text": text,
+        })
+    return {
+        "title": strip_html_text(headings[-1]) if headings else compact_text((dataset.get("meta") or {}).get("title")),
+        "paragraphs": paragraphs,
+        "plainText": strip_html_text(markup),
+    }
+
+
+def html_attribute_patterns(qid):
+    escaped = re.escape(str(qid))
+    return [
+        rf'(?is)<tr\b[^>]*>.*?\b(?:name|id)=["\'][^"\']*{escaped}[^"\']*["\'].*?</tr>',
+        rf'(?is)<div\b[^>]*(?:question-item|completion-item)[^>]*>.*?\b(?:name|id)=["\'][^"\']*{escaped}[^"\']*["\'].*?</div>',
+        rf'(?is)<p\b[^>]*>.*?\b(?:name|id)=["\'][^"\']*{escaped}[^"\']*["\'].*?</p>',
+    ]
+
+
+def extract_options(markup):
+    options = []
+    for label_html in re.findall(r"(?is)<label\b[^>]*>(.*?)</label>", markup or ""):
+        value_match = re.search(r'(?is)\bvalue=["\']([^"\']+)["\']', label_html)
+        option_text = strip_html_text(label_html)
+        if option_text:
+            options.append({
+                "value": html.unescape(value_match.group(1)) if value_match else None,
+                "text": option_text,
+            })
+    return options
+
+
+def extract_question_text(markup, qid, display_number):
+    number = compact_text(display_number).strip()
+    for pattern in html_attribute_patterns(qid):
+        match = re.search(pattern, markup or "")
+        if match:
+            return strip_html_text(match.group(0))
+    if number:
+        row_match = re.search(rf"(?is)<tr\b[^>]*>.*?<strong[^>]*>\s*{re.escape(number)}\s*</strong>.*?</tr>", markup or "")
+        if row_match:
+            return strip_html_text(row_match.group(0))
+        item_match = re.search(rf"(?is)<div\b[^>]*(?:question-item|completion-item)[^>]*>.*?(?:q-number[^>]*>\s*{re.escape(number)}|<strong[^>]*>\s*{re.escape(number)}\s*</strong>).*?</div>", markup or "")
+        if item_match:
+            return strip_html_text(item_match.group(0))
+    prompts = [
+        strip_html_text(item)
+        for item in re.findall(r"(?is)<p\b[^>]*>(.*?)</p>", markup or "")
+        if strip_html_text(item)
+    ]
+    return " ".join(prompts[-2:]) if prompts else strip_html_text(markup)
+
+
+def extract_question_groups(dataset):
+    display_map = dataset.get("questionDisplayMap") if isinstance(dataset.get("questionDisplayMap"), dict) else {}
+    answer_key = dataset.get("answerKey") if isinstance(dataset.get("answerKey"), dict) else {}
+    groups = []
+    for group in dataset.get("questionGroups") or []:
+        if not isinstance(group, dict):
+            continue
+        markup = group.get("bodyHtml") or group.get("html") or ""
+        question_ids = [str(qid) for qid in (group.get("questionIds") or []) if qid]
+        groups.append({
+            "groupId": group.get("groupId"),
+            "kind": group.get("kind"),
+            "questionIds": question_ids,
+            "instructions": strip_html_text(markup),
+            "options": extract_options(markup),
+            "questions": [
+                {
+                    "questionId": qid,
+                    "number": display_map.get(qid) or qid,
+                    "text": extract_question_text(markup, qid, display_map.get(qid) or qid),
+                    "correctAnswer": answer_key.get(qid),
+                }
+                for qid in question_ids
+            ],
+        })
+    return groups
+
+
+def normalize_answer_detail_map(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        result = {}
+        for item in value:
+            if isinstance(item, dict):
+                qid = item.get("questionId") or item.get("id") or item.get("qid")
+                if qid:
+                    result[str(qid)] = item
+        return result
+    return {}
+
+
+def get_nested_answer_maps(entry):
+    score_info = entry.get("scoreInfo") if isinstance(entry.get("scoreInfo"), dict) else {}
+    return [
+        normalize_answer_detail_map(entry.get("answerComparison")),
+        normalize_answer_detail_map(entry.get("answerDetails")),
+        normalize_answer_detail_map(score_info.get("details")),
+        normalize_answer_detail_map(score_info.get("answerDetails")),
+    ]
+
+
+def pick_first(*values):
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def get_answer_detail(entry, qid, exam_id, answer_key, parent_record=None):
+    qid = str(qid)
+    detail = {}
+    for answer_map in get_nested_answer_maps(entry):
+        if qid in answer_map and isinstance(answer_map[qid], dict):
+            detail.update(answer_map[qid])
+    answers = entry.get("answers") if isinstance(entry.get("answers"), dict) else {}
+    correct_map = entry.get("correctAnswerMap") if isinstance(entry.get("correctAnswerMap"), dict) else {}
+    user_answer = pick_first(detail.get("userAnswer"), detail.get("user"), detail.get("answer"), detail.get("selectedAnswer"), answers.get(qid))
+    correct_answer = pick_first(detail.get("correctAnswer"), detail.get("standardAnswer"), detail.get("expectedAnswer"), correct_map.get(qid), answer_key.get(qid))
+    is_correct = detail.get("isCorrect")
+    if is_correct is None and detail.get("correct") is not None:
+        is_correct = detail.get("correct")
+    wrong_reason = get_wrong_reason_for_export(entry, exam_id, qid, detail, parent_record)
+    return {
+        "questionId": qid,
+        "userAnswer": user_answer,
+        "correctAnswer": correct_answer,
+        "isCorrect": bool(is_correct) if isinstance(is_correct, bool) else is_correct,
+        "wrongReason": wrong_reason,
+    }
+
+
+def get_wrong_reason_for_export(entry, exam_id, qid, detail=None, parent_record=None):
+    detail = detail if isinstance(detail, dict) else {}
+    if isinstance(detail.get("wrongReason"), dict):
+        return detail.get("wrongReason")
+    candidates = [qid, str(qid), f"{exam_id}::{qid}", f"{exam_id}:{qid}"]
+    sources = [entry, parent_record]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        wrong_reasons = source.get("wrongReasons") if isinstance(source.get("wrongReasons"), dict) else {}
+        for key in candidates:
+            if key in wrong_reasons:
+                return wrong_reasons.get(key)
+    return None
+
+
+def collect_question_ids(entry, dataset):
+    ordered = []
+    for source in (
+        dataset.get("questionOrder") if isinstance(dataset, dict) else None,
+        (dataset.get("answerKey") or {}).keys() if isinstance(dataset.get("answerKey"), dict) else None,
+        (entry.get("answers") or {}).keys() if isinstance(entry.get("answers"), dict) else None,
+        normalize_answer_detail_map(entry.get("answerComparison")).keys(),
+        normalize_answer_detail_map((entry.get("scoreInfo") or {}).get("details") if isinstance(entry.get("scoreInfo"), dict) else None).keys(),
+    ):
+        if not source:
+            continue
+        for qid in source:
+            text = str(qid)
+            if text and text not in ordered:
+                ordered.append(text)
+    return ordered
+
+
+def build_passage_export(entry, content_root, parent_record=None):
+    metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+    score_info = entry.get("scoreInfo") if isinstance(entry.get("scoreInfo"), dict) else {}
+    exam_id = record_exam_id(entry) or metadata.get("examId") or entry.get("dataKey")
+    try:
+        dataset = load_reading_exam_dataset(content_root, exam_id)
+        source_missing = False
+        source_error = None
+    except Exception as error:
+        dataset = {"meta": {"title": entry.get("title") or metadata.get("examTitle") or "", "examId": exam_id}, "answerKey": {}}
+        source_missing = True
+        source_error = str(error)
+
+    answer_key = dataset.get("answerKey") if isinstance(dataset.get("answerKey"), dict) else {}
+    answer_rows = [get_answer_detail(entry, qid, exam_id, answer_key, parent_record) for qid in collect_question_ids(entry, dataset)]
+    wrong_rows = [
+        row for row in answer_rows
+        if row.get("isCorrect") is False or row.get("wrongReason")
+    ]
+    return {
+        "examId": exam_id,
+        "title": entry.get("title") or metadata.get("examTitle") or (dataset.get("meta") or {}).get("title") or "",
+        "category": metadata.get("category") or entry.get("category") or (dataset.get("meta") or {}).get("category"),
+        "sourceFile": dataset.get("_sourcePath"),
+        "sourceMissing": source_missing,
+        "sourceError": source_error,
+        "scoreInfo": {
+            "score": score_info.get("score", entry.get("score")),
+            "totalQuestions": score_info.get("total", entry.get("totalQuestions")),
+            "correctAnswers": score_info.get("correct", entry.get("score", entry.get("correctAnswers"))),
+            "accuracy": score_info.get("accuracy", entry.get("accuracy")),
+            "percentage": score_info.get("percentage", entry.get("percentage")),
+            "duration": entry.get("duration", score_info.get("duration", score_info.get("timeSpent"))),
+        },
+        "passage": extract_passage(dataset),
+        "questionGroups": extract_question_groups(dataset),
+        "answers": answer_rows,
+        "wrongQuestions": wrong_rows,
+    }
+
+
+def build_record_full_wrong_export(record, content_root):
+    score_info = record.get("scoreInfo") if isinstance(record.get("scoreInfo"), dict) else {}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    suite_entries = record.get("suiteEntries") if isinstance(record.get("suiteEntries"), list) else []
+    entries = suite_entries if suite_entries else [record]
+    return {
+        "recordId": str(record.get("id") or record.get("sessionId") or ""),
+        "sessionId": record.get("sessionId"),
+        "suiteSessionId": record.get("suiteSessionId") or metadata.get("suiteSessionId"),
+        "title": record.get("title") or metadata.get("examTitle") or "",
+        "recordDate": record.get("date") or record.get("endTime") or record.get("startTime"),
+        "duration": record.get("duration", score_info.get("duration", score_info.get("timeSpent", 0))) or 0,
+        "score": score_info.get("score", record.get("score")),
+        "totalQuestions": record.get("totalQuestions", score_info.get("total")),
+        "correctAnswers": score_info.get("correct", record.get("score", record.get("correctAnswers"))),
+        "accuracy": record.get("accuracy", score_info.get("accuracy")),
+        "percentage": record.get("percentage", score_info.get("percentage")),
+        "passages": [build_passage_export(entry, content_root, record) for entry in entries if isinstance(entry, dict)],
+    }
+
+
+def build_full_wrong_export(records, content_root):
+    final_records = [record for record in records if isinstance(record, dict)]
+    exported = [build_record_full_wrong_export(record, content_root) for record in final_records]
+    return {
+        "schemaVersion": "PracticeFullWrongExportV1",
+        "generatedAt": now_iso(),
+        "source": "sqlite-on-demand",
+        "recordCount": len(exported),
+        "records": exported,
+    }
+
+
+def normalize_vocab_state_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    vocab_state = payload.get("vocab_state")
+    if vocab_state is None:
+        vocab_state = payload.get("vocabState")
+    return vocab_state if isinstance(vocab_state, dict) else None
 
 
 class PracticeSqliteStore:
@@ -706,6 +1136,27 @@ class PracticeSqliteStore:
         if not row:
             return None
         return json.loads(row["payload"])
+
+    def get_records_by_ids(self, record_ids):
+        final_ids = [str(value).strip() for value in (record_ids or []) if value is not None and str(value).strip()]
+        if not final_ids:
+            return self.list_records()
+        records = []
+        with self.connect() as conn:
+            for record_id in final_ids:
+                row = conn.execute("SELECT payload FROM practice_records WHERE id = ?", (record_id,)).fetchone()
+                if not row:
+                    continue
+                try:
+                    records.append(json.loads(row["payload"]))
+                except Exception:
+                    continue
+        return records
+
+    def export_full_wrong_records(self, record_ids=None, content_root=None):
+        records = self.get_records_by_ids(record_ids)
+        root = Path(content_root or Path.cwd()).resolve()
+        return build_full_wrong_export(records, root)
 
     def _upsert_record_with_conn(self, conn, record):
         if not isinstance(record, dict):
@@ -808,24 +1259,49 @@ class PracticeSqliteStore:
 
 
 def seed_database_from_latest_backup(store, backup_dir):
-    if store.count_records() > 0:
-        return {"seeded": False, "reason": "database already has records", "recordCount": store.count_records()}
     latest = Path(backup_dir) / LATEST_FILENAME
     if not latest.is_file():
-        return {"seeded": False, "reason": "latest backup not found", "recordCount": 0}
+        return {"seeded": False, "reason": "latest backup not found", "recordCount": store.count_records()}
     payload = json.loads(latest.read_text(encoding="utf-8"))
+    existing_vocab_state = store.read_meta("vocab_state", None)
+    vocab_state = normalize_vocab_state_payload(payload)
+    vocab_state_seeded = False
+    if existing_vocab_state is None and vocab_state:
+        store.write_meta("vocab_state", vocab_state)
+        vocab_state_seeded = True
+
+    record_count = store.count_records()
+    if record_count > 0:
+        return {
+            "seeded": False,
+            "reason": "database already has records",
+            "recordCount": record_count,
+            "vocabStateSeeded": vocab_state_seeded,
+        }
+
     records = normalize_records_payload(payload)
     if not records:
-        return {"seeded": False, "reason": "latest backup has no records", "recordCount": 0}
+        return {
+            "seeded": False,
+            "reason": "latest backup has no records",
+            "recordCount": 0,
+            "vocabStateSeeded": vocab_state_seeded,
+        }
     final_records = store.replace_records(records)
     stats = normalize_stats_payload(payload)
     if stats:
         store.write_meta("user_stats", stats)
-    return {"seeded": True, "recordCount": len(final_records), "backup": str(latest)}
+    return {
+        "seeded": True,
+        "recordCount": len(final_records),
+        "backup": str(latest),
+        "vocabStateSeeded": vocab_state_seeded,
+    }
 
 
 class LocalBackupHandler(SimpleHTTPRequestHandler):
     backup_dir = Path(DEFAULT_BACKUP_DIR)
+    content_root = Path.cwd()
     sqlite_store = None
 
     def end_headers(self):
@@ -951,6 +1427,15 @@ class LocalBackupHandler(SimpleHTTPRequestHandler):
                 deleted = store.delete_records(ids)
                 self.send_json(200, {"ok": True, "deletedCount": deleted, "records": store.list_records()})
                 return
+            if method == "POST" and path == "/api/sqlite/practice-records/full-wrong-export":
+                ids = body.get("ids") if isinstance(body, dict) else []
+                export = store.export_full_wrong_records(ids, self.content_root)
+                self.send_json(200, {
+                    "ok": True,
+                    "export": export,
+                    "count": export.get("recordCount", 0) if isinstance(export, dict) else 0,
+                })
+                return
             if method in ("POST", "PUT") and path == "/api/sqlite/practice-records/wrong-reasons":
                 saved, match_reason = store.save_wrong_reasons(body)
                 self.send_json(200, {
@@ -1042,6 +1527,7 @@ def main():
     db_path = Path(args.db_path).resolve() if args.db_path else (backup_dir / DEFAULT_DB_FILENAME).resolve()
     os.chdir(root)
     LocalBackupHandler.backup_dir = backup_dir
+    LocalBackupHandler.content_root = root
     LocalBackupHandler.sqlite_store = PracticeSqliteStore(db_path)
     seed_result = seed_database_from_latest_backup(LocalBackupHandler.sqlite_store, backup_dir)
 

@@ -232,6 +232,21 @@
             .replace(/[^a-z0-9]+/g, '');
     }
 
+    function extractLeadingOptionLabel(value) {
+        const cleaned = String(value == null ? '' : value)
+            .replace(/[“”]/g, '"')
+            .replace(/[‘’]/g, "'")
+            .replace(/[‐‑‒–—]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[\s"'`()[\]{}<>.,;:!?]+|[\s"'`()[\]{}<>.,;:!?]+$/g, '');
+        if (/^[A-Z](?:\s+[A-Z])+$/.test(cleaned)) {
+            return '';
+        }
+        const match = cleaned.match(/^([A-Z])(?:[.)]|\s+)\S+/);
+        return match ? match[1] : '';
+    }
+
     function splitAnswerTokens(value) {
         if (Array.isArray(value)) {
             return value
@@ -279,6 +294,12 @@
         if (normalizedLeft === normalizedRight) {
             return true;
         }
+        if (/^[A-Z]$/.test(normalizedLeft) && extractLeadingOptionLabel(normalizedRight) === normalizedLeft) {
+            return true;
+        }
+        if (/^[A-Z]$/.test(normalizedRight) && extractLeadingOptionLabel(normalizedLeft) === normalizedRight) {
+            return true;
+        }
         if (/^[A-Z]$/.test(normalizedLeft) || /^[A-Z]$/.test(normalizedRight)) {
             return false;
         }
@@ -303,6 +324,13 @@
         }
         if (expected.length === 0 || actual.length === 0) {
             return false;
+        }
+
+        if (expected.length === 1 && /^[A-Z]$/.test(expected[0])) {
+            const actualLeadingOption = extractLeadingOptionLabel(userAnswer);
+            if (actualLeadingOption) {
+                return actualLeadingOption === expected[0];
+            }
         }
 
         if (Array.isArray(correctAnswer)) {
@@ -362,6 +390,7 @@
 
     const api = {
         normalizeToken,
+        extractLeadingOptionLabel,
         splitAnswerTokens,
         areTokensEquivalent,
         compareTokenSets,

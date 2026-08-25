@@ -780,6 +780,8 @@
 
     const DEFAULT_REVIEW_QUEUE = Object.freeze([]);
     const DEFAULT_LIST_ID = 'default';
+    const VOCAB_STATE_META_KEY = 'vocab_state';
+    const VOCAB_STATE_SCHEMA_VERSION = 'VocabStateV1';
     const DEFAULT_LEXICON_URL = 'assets/wordlists/ielts_core.json';
     const SPELLING_ERROR_LIST_IDS = new Set(['spelling-errors-p1', 'spelling-errors-p4', 'spelling-errors-master']);
 
@@ -798,7 +800,10 @@
         registryUnsubscribe: null,
         lastLoadSource: 'init',
         activeListId: DEFAULT_LIST_ID,
-        listCache: new Map()
+        listCache: new Map(),
+        backendSyncTimer: null,
+        backendSyncPromise: null,
+        suppressBackendSync: false
     };
 
     function emitReady(value) {
@@ -1027,7 +1032,9 @@
                     return value;
                 }
             } catch (error) {
-                console.warn('[VocabStore] metaRepo读取失败:', error);
+                if (!isExpectedMetaReadFallback(error)) {
+                    console.warn('[VocabStore] metaRepo读取失败:', error);
+                }
             }
         }
         if (state.storageManager && typeof state.storageManager.get === 'function') {
@@ -1071,6 +1078,43 @@
         rebuildIndex();
     }
 
+    function cloneJson(value) {
+        if (value == null) {
+            return value;
+        }
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch (_) {
+            return value;
+        }
+    }
+
+    function getSqliteBackend() {
+        const backend = window.SqlitePracticeBackend;
+        return backend && typeof backend.isAvailable === 'function'
+            ? backend
+            : null;
+    }
+
+    async function getAvailableSqliteBackend() {
+        const backend = getSqliteBackend();
+        if (!backend) {
+            return null;
+        }
+        try {
+            const available = await backend.isAvailable();
+            return available ? backend : null;
+        } catch (error) {
+            console.warn('[VocabStore] SQLite 词表状态检查失败:', error);
+            return null;
+        }
+    }
+
+    function isExpectedMetaReadFallback(error) {
+        const message = String(error && (error.message || error) || '');
+        return message.includes('MetaRepository 未注册键') || message.includes('数据验证失败');
+    }
+
     function getStorageKeyForListId(listId) {
         const targetId = typeof listId === 'string' && VOCAB_LISTS[listId] ? listId : DEFAULT_LIST_ID;
         return VOCAB_LISTS[targetId].storageKey;
@@ -1099,6 +1143,194 @@
             return [];
         }
         return listWords.map((entry) => normalizeListEntry(entry, listId)).filter(Boolean);
+    }
+
+    function getSnapshotSource(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') {
+            return null;
+        }
+        if (snapshot.vocab_state && typeof snapshot.vocab_state === 'object') {
+            return snapshot.vocab_state;
+        }
+        if (snapshot.vocabState && typeof snapshot.vocabState === 'object') {
+            return snapshot.vocabState;
+        }
+        return snapshot;
+    }
+
+    function normalizeVocabSnapshot(snapshot) {
+        const source = getSnapshotSource(snapshot);
+        if (!source || typeof source !== 'object') {
+            return null;
+        }
+        const rawLists = source.lists && typeof source.lists === 'object' ? source.lists : {};
+        const lists = {};
+        Object.values(VOCAB_LISTS).forEach((listConfig) => {
+            const rawList = rawLists[listConfig.id];
+            const words = normalizeStoredListWords(rawList, listConfig.id);
+            lists[listConfig.id] = {
+                id: listConfig.id,
+                name: listConfig.name,
+                icon: listConfig.icon,
+                source: listConfig.source,
+                storageKey: listConfig.storageKey,
+                words
+            };
+        });
+        const activeListId = typeof source.activeListId === 'string' && VOCAB_LISTS[source.activeListId]
+            ? source.activeListId
+            : DEFAULT_LIST_ID;
+        return {
+            schemaVersion: VOCAB_STATE_SCHEMA_VERSION,
+            updatedAt: source.updatedAt && !Number.isNaN(new Date(source.updatedAt).getTime())
+                ? new Date(source.updatedAt).toISOString()
+                : getNow(),
+            activeListId,
+            config: mergeConfig(source.config),
+            reviewQueue: Array.isArray(source.reviewQueue) ? source.reviewQueue.map((id) => String(id)) : [],
+            lists
+        };
+    }
+
+    function vocabSnapshotHasWords(snapshot) {
+        const normalized = normalizeVocabSnapshot(snapshot);
+        if (!normalized) {
+            return false;
+        }
+        return Object.values(normalized.lists).some((list) => Array.isArray(list.words) && list.words.length > 0);
+    }
+
+    async function readBackendVocabSnapshot() {
+        const backend = await getAvailableSqliteBackend();
+        if (!backend) {
+            return null;
+        }
+        try {
+            const raw = typeof backend.readVocabState === 'function'
+                ? await backend.readVocabState(null)
+                : await backend.readMeta(VOCAB_STATE_META_KEY, null);
+            return normalizeVocabSnapshot(raw);
+        } catch (error) {
+            console.warn('[VocabStore] 读取 SQLite 词表快照失败:', error);
+            return null;
+        }
+    }
+
+    async function captureSnapshot() {
+        if (!state.ready) {
+            if (state.loadingPromise) {
+                await state.loadingPromise;
+            } else {
+                await init();
+            }
+        }
+        const lists = {};
+        for (const listConfig of Object.values(VOCAB_LISTS)) {
+            let words = [];
+            if (listConfig.id === state.activeListId) {
+                words = state.words.map((word) => ({ ...word }));
+            } else {
+                const storedData = await read(listConfig.storageKey, []);
+                words = normalizeStoredListWords(storedData, listConfig.id);
+            }
+            lists[listConfig.id] = {
+                id: listConfig.id,
+                name: listConfig.name,
+                icon: listConfig.icon,
+                source: listConfig.source,
+                storageKey: listConfig.storageKey,
+                words
+            };
+        }
+        return {
+            schemaVersion: VOCAB_STATE_SCHEMA_VERSION,
+            updatedAt: getNow(),
+            activeListId: state.activeListId,
+            config: { ...state.config },
+            reviewQueue: state.reviewQueue.slice(),
+            lists
+        };
+    }
+
+    async function restoreSnapshot(snapshot, options = {}) {
+        const normalized = normalizeVocabSnapshot(snapshot);
+        if (!normalized || !vocabSnapshotHasWords(normalized)) {
+            return false;
+        }
+        const previousSuppress = state.suppressBackendSync;
+        state.suppressBackendSync = true;
+        try {
+            state.config = mergeConfig(normalized.config);
+            state.reviewQueue = normalized.reviewQueue.slice();
+            state.activeListId = normalized.activeListId;
+            for (const listConfig of Object.values(VOCAB_LISTS)) {
+                const listData = normalized.lists[listConfig.id];
+                const words = listData && Array.isArray(listData.words) ? listData.words : [];
+                await persist(listConfig.storageKey, words);
+            }
+            await persist(STORAGE_KEYS.CONFIG, state.config);
+            await persist(STORAGE_KEYS.REVIEW_QUEUE, state.reviewQueue);
+            await persist(STORAGE_KEYS.ACTIVE_LIST, state.activeListId);
+            const activeWords = normalized.lists[state.activeListId]?.words || [];
+            setWordsInternal(activeWords);
+            state.listCache.clear();
+            state.lastLoadSource = options.source || 'snapshot';
+        } finally {
+            state.suppressBackendSync = previousSuppress;
+        }
+        if (options.syncBackend !== false) {
+            await syncVocabSnapshotToBackend('restore');
+        }
+        return true;
+    }
+
+    async function syncVocabSnapshotToBackend(reason = 'update') {
+        if (state.suppressBackendSync) {
+            return false;
+        }
+        if (state.backendSyncPromise) {
+            return state.backendSyncPromise;
+        }
+        state.backendSyncPromise = (async () => {
+            const backend = await getAvailableSqliteBackend();
+            if (!backend) {
+                return false;
+            }
+            const snapshot = await captureSnapshot();
+            const writer = typeof backend.writeVocabState === 'function'
+                ? backend.writeVocabState.bind(backend)
+                : (value) => backend.writeMeta(VOCAB_STATE_META_KEY, value);
+            await writer(snapshot);
+            console.info('[VocabStore] SQLite 词表快照已同步:', {
+                reason,
+                activeListId: snapshot.activeListId,
+                listCount: Object.keys(snapshot.lists || {}).length
+            });
+            return true;
+        })()
+            .catch((error) => {
+                console.warn('[VocabStore] SQLite 词表快照同步失败:', error);
+                return false;
+            })
+            .finally(() => {
+                state.backendSyncPromise = null;
+            });
+        return state.backendSyncPromise;
+    }
+
+    function queueBackendSync(reason = 'update') {
+        if (state.suppressBackendSync) {
+            return;
+        }
+        const clearTimer = typeof window.clearTimeout === 'function' ? window.clearTimeout.bind(window) : clearTimeout;
+        const setTimer = typeof window.setTimeout === 'function' ? window.setTimeout.bind(window) : setTimeout;
+        if (state.backendSyncTimer) {
+            clearTimer(state.backendSyncTimer);
+        }
+        state.backendSyncTimer = setTimer(() => {
+            state.backendSyncTimer = null;
+            syncVocabSnapshotToBackend(reason);
+        }, 250);
     }
 
     async function fetchJsonWithFileFallback(url) {
@@ -1213,6 +1445,15 @@
 
             state.config = mergeConfig(storedConfig);
             state.reviewQueue = Array.isArray(storedQueue) ? storedQueue.map((id) => String(id)) : [];
+
+            const backendSnapshot = await readBackendVocabSnapshot();
+            if (backendSnapshot && vocabSnapshotHasWords(backendSnapshot)) {
+                await restoreSnapshot(backendSnapshot, { syncBackend: false, source: 'sqlite' });
+                return;
+            }
+            if (normalizedWords.length) {
+                queueBackendSync('bootstrap-browser');
+            }
         })()
             .catch((error) => {
                 console.error('[VocabStore] 初始化加载失败:', error);
@@ -1249,6 +1490,7 @@
                 setWordsInternal(normalized);
                 state.lastLoadSource = 'default';
             }
+            queueBackendSync('ensure-default-lexicon');
             state.listCache.set(DEFAULT_LIST_ID, {
                 data: {
                     id: DEFAULT_LIST_ID,
@@ -1323,6 +1565,7 @@
         await persist(getActiveStorageKey(), state.words);
         await persist(STORAGE_KEYS.CONFIG, state.config);
         await persist(STORAGE_KEYS.REVIEW_QUEUE, state.reviewQueue);
+        queueBackendSync('attach-repositories');
         emitReady(true);
     }
 
@@ -1337,6 +1580,7 @@
         setWordsInternal(normalized);
         await persist(getActiveStorageKey(), normalized);
         state.listCache.delete(state.activeListId);
+        queueBackendSync('set-words');
         return getWords();
     }
 
@@ -1357,6 +1601,7 @@
             state.wordIndex.set(id, updated);
             await persist(getActiveStorageKey(), state.words);
             state.listCache.delete(state.activeListId);
+            queueBackendSync('update-word');
             return { ...updated };
         }
         return null;
@@ -1369,6 +1614,7 @@
     async function setConfig(config) {
         state.config = mergeConfig(config);
         await persist(STORAGE_KEYS.CONFIG, state.config);
+        queueBackendSync('set-config');
         return getConfig();
     }
 
@@ -1379,6 +1625,7 @@
     async function setReviewQueue(queue) {
         state.reviewQueue = Array.isArray(queue) ? queue.map((id) => String(id)) : [];
         await persist(STORAGE_KEYS.REVIEW_QUEUE, state.reviewQueue);
+        queueBackendSync('set-review-queue');
         return getReviewQueue();
     }
 
@@ -1598,6 +1845,7 @@
             // 清空复习队列（新词表需要重新生成队列）
             state.reviewQueue = [];
             await persist(STORAGE_KEYS.REVIEW_QUEUE, []);
+            queueBackendSync('set-active-list');
 
             return true;
         } catch (error) {
@@ -1728,6 +1976,7 @@
         if (state.activeListId === listId) {
             setWordsInternal(words.filter(Boolean));
         }
+        queueBackendSync('reading-highlight');
         return normalized;
     }
 
@@ -1757,6 +2006,9 @@
         getAvailableLists,
         getActiveListId,
         upsertReadingHighlightWord,
+        captureSnapshot,
+        restoreSnapshot,
+        syncVocabSnapshotToBackend,
         get VOCAB_LISTS() {
             return VOCAB_LISTS;
         },
@@ -2406,6 +2658,8 @@
             lastFocus: null,
             importing: false,
             exporting: false,
+            listBrowserQuery: '',
+            listBrowserLearnedOnly: false,
             listSwitcher: null,
             listSwitcherListenerAttached: false
         },
@@ -2462,6 +2716,10 @@
 
     function isSettingsModalOpen() {
         return state.elements.settingsModal?.dataset.open === 'true';
+    }
+
+    function isListModalOpen() {
+        return state.elements.listModal?.dataset.open === 'true';
     }
 
     function clampNumber(value, min, max) {
@@ -2571,6 +2829,7 @@
                             <div class="vocab-menu" data-vocab-role="menu" hidden>
                                 <div class="vocab-menu__panel" data-vocab-role="menu-panel-main">
                                     <button type="button" data-action="menu-lists">切换词表</button>
+                                    <button type="button" data-action="menu-view-list">查看词表</button>
                                     <button type="button" data-action="menu-import">导入词表</button>
                                     <button type="button" data-action="menu-export">导出进度</button>
                                     <button type="button" data-action="menu-settings">学习设置</button>
@@ -2628,6 +2887,28 @@
             </main>
             <div class="visually-hidden" aria-live="polite" data-vocab-role="live-region"></div>
             <input type="file" accept=".json,.csv" data-vocab-role="import-input" hidden>
+            <div class="vocab-list-modal" data-vocab-role="list-modal" hidden>
+                <div class="vocab-list-modal__backdrop" data-action="close-list-modal" tabindex="-1"></div>
+                <div class="vocab-list-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="vocab-list-title" data-vocab-role="list-dialog">
+                    <header class="vocab-list-modal__header">
+                        <div>
+                            <h3 id="vocab-list-title">词表</h3>
+                            <p class="vocab-list-modal__subtitle" data-vocab-role="list-subtitle">当前词表 0 个词</p>
+                        </div>
+                        <button class="btn btn-icon" type="button" data-action="close-list-modal" aria-label="关闭词表">×</button>
+                    </header>
+                    <div class="vocab-list-modal__toolbar">
+                        <input type="search" data-vocab-role="list-search" placeholder="搜索单词、释义、笔记">
+                        <label class="vocab-list-modal__filter">
+                            <input type="checkbox" data-vocab-role="list-learned-only">
+                            <span>只看已学</span>
+                        </label>
+                        <button class="btn btn-sm btn-outline" type="button" data-action="export-current-list">导出当前词表</button>
+                    </div>
+                    <div class="vocab-list-modal__stats" data-vocab-role="list-stats"></div>
+                    <div class="vocab-list-modal__body" data-vocab-role="list-body"></div>
+                </div>
+            </div>
             <div class="vocab-settings-modal" data-vocab-role="settings-modal" hidden>
                 <div class="vocab-settings-modal__backdrop" data-action="close-settings" tabindex="-1"></div>
                 <div class="vocab-settings-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="vocab-settings-title" data-vocab-role="settings-dialog">
@@ -2690,6 +2971,13 @@
             noteStatus: layout.querySelector('[data-field=\"note-status\"]'),
             liveRegion: layout.querySelector('[data-vocab-role=\"live-region\"]'),
             importInput: layout.querySelector('[data-vocab-role=\"import-input\"]'),
+            listModal: layout.querySelector('[data-vocab-role=\"list-modal\"]'),
+            listDialog: layout.querySelector('[data-vocab-role=\"list-dialog\"]'),
+            listSubtitle: layout.querySelector('[data-vocab-role=\"list-subtitle\"]'),
+            listSearch: layout.querySelector('[data-vocab-role=\"list-search\"]'),
+            listLearnedOnly: layout.querySelector('[data-vocab-role=\"list-learned-only\"]'),
+            listStats: layout.querySelector('[data-vocab-role=\"list-stats\"]'),
+            listBody: layout.querySelector('[data-vocab-role=\"list-body\"]'),
             settingsModal: layout.querySelector('[data-vocab-role=\"settings-modal\"]'),
             settingsForm: layout.querySelector('[data-vocab-role=\"settings-form\"]'),
             settingsError: layout.querySelector('[data-vocab-role=\"settings-error\"]'),
@@ -2884,6 +3172,10 @@
                     return;
                 }
                 closeMenu();
+                if (action === 'menu-view-list') {
+                    openListModal();
+                    return;
+                }
                 if (action === 'menu-import') {
                     handleImportRequest();
                     return;
@@ -2927,6 +3219,13 @@
             state.keyboardHandler = (event) => {
                 const command = KEY_BINDINGS[event.code];
                 if (!command) {
+                    return;
+                }
+                if (isListModalOpen()) {
+                    if (command === 'escape') {
+                        event.preventDefault();
+                        closeListModal();
+                    }
                     return;
                 }
                 if (isSettingsModalOpen()) {
@@ -2976,6 +3275,39 @@
         if (state.elements.sessionCard && !state.elements.sessionCard.dataset.bound) {
             state.elements.sessionCard.addEventListener('click', handleCardAction);
             state.elements.sessionCard.dataset.bound = 'true';
+        }
+        if (state.elements.listModal && !state.elements.listModal.dataset.bound) {
+            state.elements.listModal.addEventListener('click', (event) => {
+                const trigger = event.target.closest('[data-action]');
+                const action = trigger?.dataset?.action;
+                if (!action) {
+                    return;
+                }
+                if (action === 'close-list-modal') {
+                    event.preventDefault();
+                    closeListModal();
+                    return;
+                }
+                if (action === 'export-current-list') {
+                    event.preventDefault();
+                    exportCurrentList();
+                }
+            });
+            state.elements.listModal.dataset.bound = 'true';
+        }
+        if (state.elements.listSearch && !state.elements.listSearch.dataset.bound) {
+            state.elements.listSearch.addEventListener('input', (event) => {
+                state.ui.listBrowserQuery = event.target.value || '';
+                renderListBrowser();
+            });
+            state.elements.listSearch.dataset.bound = 'true';
+        }
+        if (state.elements.listLearnedOnly && !state.elements.listLearnedOnly.dataset.bound) {
+            state.elements.listLearnedOnly.addEventListener('change', (event) => {
+                state.ui.listBrowserLearnedOnly = !!event.target.checked;
+                renderListBrowser();
+            });
+            state.elements.listLearnedOnly.dataset.bound = 'true';
         }
         if (state.elements.importInput && !state.elements.importInput.dataset.bound) {
             state.elements.importInput.addEventListener('change', handleImportInputChange);
@@ -3513,8 +3845,218 @@
             .replace(/'/g, '&#039;');
     }
 
+    function formatDateOnly(value) {
+        if (!value) {
+            return '-';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '-';
+        }
+        return date.toLocaleDateString();
+    }
+
+    function formatIntervalDays(value) {
+        const days = Number(value);
+        if (!Number.isFinite(days) || days <= 0) {
+            return '-';
+        }
+        return `${Math.floor(days)} 天`;
+    }
+
+    function getActiveListLabel() {
+        if (!state.store || typeof state.store.getActiveListId !== 'function') {
+            return '当前词表';
+        }
+        const listId = state.store.getActiveListId();
+        const lists = state.store.VOCAB_LISTS || {};
+        return lists[listId]?.name || '当前词表';
+    }
+
+    function getWordStatus(word, config) {
+        const masteredTarget = Number(config?.masteryCount || 4);
+        const correctCount = Number(word?.correctCount || 0);
+        if (correctCount >= masteredTarget) {
+            return { label: '已掌握', tone: 'mastered' };
+        }
+        if (word?.nextReview) {
+            const next = new Date(word.nextReview);
+            if (!Number.isNaN(next.getTime()) && next <= new Date()) {
+                return { label: '待复习', tone: 'due' };
+            }
+            return { label: '学习中', tone: 'reviewing' };
+        }
+        if (word?.lastReviewed || correctCount > 0) {
+            return { label: '学习中', tone: 'reviewing' };
+        }
+        return { label: '未学习', tone: 'new' };
+    }
+
+    function isLearnedWord(word) {
+        return Boolean(word?.lastReviewed || word?.nextReview || Number(word?.correctCount || 0) > 0);
+    }
+
+    function getVisibleListWords() {
+        if (!state.store || typeof state.store.getWords !== 'function') {
+            return [];
+        }
+        const words = state.store.getWords();
+        const query = state.ui.listBrowserQuery.trim().toLowerCase();
+        const learnedOnly = state.ui.listBrowserLearnedOnly;
+        return words.filter((word) => {
+            if (!word || typeof word.word !== 'string') {
+                return false;
+            }
+            if (learnedOnly && !isLearnedWord(word)) {
+                return false;
+            }
+            if (!query) {
+                return true;
+            }
+            const haystack = [
+                word.word,
+                word.meaning,
+                word.example,
+                word.note,
+                word.source
+            ].map((value) => String(value || '').toLowerCase()).join('\n');
+            return haystack.includes(query);
+        });
+    }
+
+    function renderListBrowser() {
+        if (!state.elements.listBody || !state.store) {
+            return;
+        }
+        const allWords = state.store.getWords ? state.store.getWords() : [];
+        const config = state.store.getConfig ? state.store.getConfig() : {};
+        const visibleWords = getVisibleListWords();
+        const learnedCount = allWords.filter(isLearnedWord).length;
+        const masteredCount = allWords.filter((word) => getWordStatus(word, config).tone === 'mastered').length;
+        const dueCount = allWords.filter((word) => getWordStatus(word, config).tone === 'due').length;
+
+        if (state.elements.listSubtitle) {
+            state.elements.listSubtitle.textContent = `${getActiveListLabel()} · 共 ${allWords.length} 个词`;
+        }
+        if (state.elements.listStats) {
+            state.elements.listStats.innerHTML = `
+                <span>已学 ${learnedCount}</span>
+                <span>待复习 ${dueCount}</span>
+                <span>已掌握 ${masteredCount}</span>
+                <span>当前显示 ${visibleWords.length}</span>
+            `;
+        }
+
+        if (!visibleWords.length) {
+            state.elements.listBody.innerHTML = '<div class="vocab-list-empty">没有匹配的词条</div>';
+            return;
+        }
+
+        const rows = visibleWords.map((word, index) => {
+            const status = getWordStatus(word, config);
+            return `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td><strong>${escapeHtml(word.word)}</strong></td>
+                    <td>${escapeHtml(word.meaning || '-')}</td>
+                    <td><span class="vocab-list-status vocab-list-status--${status.tone}">${status.label}</span></td>
+                    <td>${Number(word.correctCount || 0)}</td>
+                    <td>${Number(word.repetitions || 0)}</td>
+                    <td>${formatIntervalDays(word.interval)}</td>
+                    <td>${formatDateOnly(word.lastReviewed)}</td>
+                    <td>${formatDateOnly(word.nextReview)}</td>
+                    <td>${escapeHtml(word.note || word.source || '-')}</td>
+                </tr>
+            `;
+        }).join('');
+        state.elements.listBody.innerHTML = `
+            <div class="vocab-list-table-wrap">
+                <table class="vocab-list-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>单词</th>
+                            <th>释义</th>
+                            <th>状态</th>
+                            <th>正确次数</th>
+                            <th>复习轮次</th>
+                            <th>间隔</th>
+                            <th>上次复习</th>
+                            <th>下次复习</th>
+                            <th>笔记/来源</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    async function openListModal() {
+        if (!state.store || typeof state.store.init !== 'function') {
+            showFeedbackMessage('词汇数据尚未准备就绪', 'warning');
+            return;
+        }
+        try {
+            await state.store.init();
+        } catch (error) {
+            console.error('[VocabSessionView] 词表加载失败:', error);
+            showFeedbackMessage('词表加载失败，请刷新后重试', 'error');
+            return;
+        }
+        if (!state.elements.listModal) {
+            showFeedbackMessage('词表面板未加载', 'warning');
+            return;
+        }
+        state.ui.lastFocus = document.activeElement;
+        state.elements.listModal.removeAttribute('hidden');
+        state.elements.listModal.dataset.open = 'true';
+        if (state.elements.listSearch) {
+            state.elements.listSearch.value = state.ui.listBrowserQuery;
+        }
+        if (state.elements.listLearnedOnly) {
+            state.elements.listLearnedOnly.checked = state.ui.listBrowserLearnedOnly;
+        }
+        renderListBrowser();
+        if (state.elements.listSearch && typeof state.elements.listSearch.focus === 'function') {
+            state.elements.listSearch.focus();
+        }
+    }
+
+    function closeListModal() {
+        if (!state.elements.listModal) {
+            return;
+        }
+        state.elements.listModal.setAttribute('hidden', 'hidden');
+        state.elements.listModal.dataset.open = 'false';
+        const previousFocus = state.ui.lastFocus;
+        if (previousFocus && typeof previousFocus.focus === 'function') {
+            previousFocus.focus();
+        }
+        state.ui.lastFocus = null;
+    }
+
+    function exportCurrentList() {
+        if (!state.store || typeof state.store.getWords !== 'function') {
+            showFeedbackMessage('词汇数据尚未加载', 'warning');
+            return;
+        }
+        const payload = {
+            version: 'vocab-list-export-1',
+            exportedAt: new Date().toISOString(),
+            listId: state.store.getActiveListId ? state.store.getActiveListId() : null,
+            name: getActiveListLabel(),
+            query: state.ui.listBrowserQuery || '',
+            learnedOnly: state.ui.listBrowserLearnedOnly,
+            words: getVisibleListWords()
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        triggerDownload(blob, `vocab-list-${formatTimestamp()}.json`);
+        showFeedbackMessage('当前词表已导出', 'success');
+    }
+
     function buildFeedbackSummary(status, word) {
-        const nextReview = word.nextReview ? new Date(word.nextReview).toLocaleString() : '稍后安排';
+        const nextReview = word.nextReview ? formatDateOnly(word.nextReview) : '稍后安排';
         if (status === 'correct') {
             return {
                 title: '太棒了！',

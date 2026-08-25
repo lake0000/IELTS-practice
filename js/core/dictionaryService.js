@@ -15,6 +15,7 @@
     let ready = false;
     let exactIndex = new Map();
     let variantIndex = new Map();
+    let loadedSignature = '';
 
     function cleanText(value) {
         return String(value || '')
@@ -200,30 +201,32 @@
     }
 
     function init() {
-        if (ready) {
-            return true;
-        }
-        exactIndex = new Map();
-        variantIndex = new Map();
         const dictionaries = global.__LOCAL_DICTIONARIES__ || {};
         const ecdictEntries = dictionaries.ecdict && Array.isArray(dictionaries.ecdict.entries)
             ? dictionaries.ecdict.entries
             : [];
+        const embeddedWordlists = global.__EMBEDDED_WORDLISTS__ || {};
+        const ieltsEntries = Array.isArray(embeddedWordlists.ielts_core)
+            ? embeddedWordlists.ielts_core
+            : [];
+        const signature = `${ecdictEntries.length}:${ieltsEntries.length}`;
+        if (ready && signature === loadedSignature) {
+            return true;
+        }
+        exactIndex = new Map();
+        variantIndex = new Map();
         ecdictEntries
             .map(normalizeECDICTEntry)
             .filter(Boolean)
             .forEach((entry) => putEntry(entry, true));
 
-        const embeddedWordlists = global.__EMBEDDED_WORDLISTS__ || {};
-        const ieltsEntries = Array.isArray(embeddedWordlists.ielts_core)
-            ? embeddedWordlists.ielts_core
-            : [];
         ieltsEntries
             .map(normalizeIeltsEntry)
             .filter(Boolean)
             .forEach((entry) => putEntry(entry, false));
 
         ready = true;
+        loadedSignature = signature;
         return true;
     }
 

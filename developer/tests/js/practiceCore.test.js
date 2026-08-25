@@ -765,6 +765,61 @@ async function testReplayResultSnapshotSuitePrefixedKeys(PracticeCore) {
     });
 }
 
+async function testStandardizeRecordKeepsWrongReasonCategoriesAndScoreInfo(PracticeCore) {
+    const record = PracticeCore.contracts.standardizeRecord({
+        id: 'record_p2-low-37_test',
+        examId: 'p2-low-37',
+        sessionId: 'p2-low-37_session',
+        title: 'Keeping the water away 洪水防控',
+        duration: 977,
+        score: 11,
+        totalQuestions: 13,
+        accuracy: 11 / 13,
+        percentage: 0,
+        answerComparison: {
+            q2: {
+                questionId: 'q2',
+                userAnswer: '',
+                correctAnswer: 'C',
+                isCorrect: false,
+                wrongReason: {
+                    category: '原文理解错误',
+                    categories: ['原文理解错误', '单词不认识'],
+                    note: 'natural watercourses'
+                }
+            }
+        },
+        wrongReasons: {
+            q2: {
+                category: '原文理解错误',
+                categories: ['原文理解错误', '单词不认识'],
+                note: 'natural watercourses'
+            }
+        },
+        scoreInfo: {
+            details: {
+                q2: {
+                    questionId: 'q2',
+                    userAnswer: '',
+                    correctAnswer: 'C',
+                    isCorrect: false
+                }
+            }
+        }
+    });
+
+    assert.deepStrictEqual(Array.from(record.wrongReasons.q2.categories), ['原文理解错误', '单词不认识'], '多选错因不能被标准化压成单选');
+    assert.strictEqual(record.scoreInfo.correct, 11, 'scoreInfo 应补齐正确数');
+    assert.strictEqual(record.scoreInfo.total, 13, 'scoreInfo 应补齐总题数');
+    assert.strictEqual(record.scoreInfo.percentage, 85, '0% 摘要不能覆盖真实分数');
+    assert.strictEqual(record.percentage, 85, '顶层 percentage 应和真实分数一致');
+
+    recordResult('PracticeCore 错因多选与分数字段补齐', true, {
+        wrongReason: record.wrongReasons.q2,
+        scoreInfo: record.scoreInfo
+    });
+}
+
 async function main() {
     const { repositories, practiceState, metaState } = createRepositoryHarness();
 
@@ -810,6 +865,7 @@ async function main() {
         await testReplayResultSnapshotCanonicalOnly(PracticeCore);
         await testReplayResultSnapshotRefusesLegacyCorrectAnswerFallback(PracticeCore);
         await testReplayResultSnapshotSuitePrefixedKeys(PracticeCore);
+        await testStandardizeRecordKeepsWrongReasonCategoriesAndScoreInfo(PracticeCore);
 
         const summary = {
             status: 'pass',

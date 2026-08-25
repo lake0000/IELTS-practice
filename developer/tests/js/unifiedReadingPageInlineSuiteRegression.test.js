@@ -121,6 +121,7 @@ function createContext() {
         Map,
         Set,
         Promise,
+        Node: { ELEMENT_NODE: 1 },
         String,
         Number,
         Boolean,
@@ -149,6 +150,7 @@ function createContext() {
         Map,
         Set,
         Promise,
+        Node: window.Node,
         String,
         Number,
         Boolean,
@@ -177,6 +179,188 @@ function loadHooks() {
 
 function plain(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+function createFakeElement(tagName, textContent = '', options = {}) {
+    const node = {
+        nodeType: 1,
+        tagName: String(tagName || '').toUpperCase(),
+        textContent,
+        className: options.className || '',
+        children: [],
+        parentElement: null,
+        nextSibling: null,
+        matches(selector) {
+            if (selector === '.paragraph-label') {
+                return String(this.className || '').split(/\s+/).includes('paragraph-label');
+            }
+            if (selector.includes('.reading-explanation-card')) {
+                return String(this.className || '').split(/\s+/).some((item) => item.startsWith('reading-explanation'));
+            }
+            return false;
+        },
+        closest() {
+            return null;
+        },
+        querySelector(selector) {
+            if (selector === '.paragraph-label') {
+                const stack = [...this.children];
+                while (stack.length) {
+                    const current = stack.shift();
+                    if (current.matches?.('.paragraph-label')) {
+                        return current;
+                    }
+                    stack.push(...(current.children || []));
+                }
+                return null;
+            }
+            if (selector === 'em, i') {
+                return this.children.find((child) => child.tagName === 'EM' || child.tagName === 'I') || null;
+            }
+            return null;
+        },
+        querySelectorAll(selector) {
+            const selectors = selector.split(',').map((item) => item.trim());
+            const results = [];
+            const visit = (current) => {
+                const isMatch = selectors.some((item) => {
+                    if (item === '.paragraph-label') {
+                        return current.matches('.paragraph-label');
+                    }
+                    if (item === '.paragraph-wrapper') {
+                        return String(current.className || '').split(/\s+/).includes('paragraph-wrapper');
+                    }
+                    if (item === 'p') {
+                        return current.tagName === 'P';
+                    }
+                    if (item === 'div') {
+                        return current.tagName === 'DIV';
+                    }
+                    if (item === '.paragraph-wrapper > p') {
+                        return current.tagName === 'P' && current.parentElement?.className === 'paragraph-wrapper';
+                    }
+                    return false;
+                });
+                if (isMatch) {
+                    results.push(current);
+                }
+                current.children.forEach(visit);
+            };
+            this.children.forEach(visit);
+            return results;
+        }
+    };
+    if (Array.isArray(options.children)) {
+        options.children.forEach((child) => appendFakeChild(node, child));
+    }
+    return node;
+}
+
+function appendFakeChild(parent, child) {
+    const previous = parent.children[parent.children.length - 1] || null;
+    if (previous) {
+        previous.nextSibling = child;
+    }
+    child.parentElement = parent;
+    parent.children.push(child);
+    return child;
+}
+
+function testPassageNotesUseLabelsInsteadOfParagraphOrder() {
+    const { hooks } = loadHooks();
+    const left = createFakeElement('section');
+    appendFakeChild(left, createFakeElement('p', 'You should spend about 20 minutes on Questions 14-26.'));
+    appendFakeChild(left, createFakeElement('h3', 'The dingo debate'));
+    appendFakeChild(left, createFakeElement('p', 'Graziers see them as pests.', {
+        children: [createFakeElement('em', 'Graziers see them as pests.')]
+    }));
+    appendFakeChild(left, createFakeElement('span', 'A', { className: 'paragraph-label' }));
+    appendFakeChild(left, createFakeElement('p', 'Paragraph A first natural paragraph.'));
+    const paragraphAEnd = appendFakeChild(left, createFakeElement('p', 'Paragraph A second natural paragraph.'));
+    appendFakeChild(left, createFakeElement('span', 'B', { className: 'paragraph-label' }));
+    const paragraphBEnd = appendFakeChild(left, createFakeElement('p', 'Paragraph B only paragraph.'));
+
+    const targets = hooks.resolvePassageTargetsForTest(left, [
+        { label: 'Paragraph A', text: 'A translation' },
+        { label: 'Paragraph B', text: 'B translation' }
+    ]);
+
+    assert.strictEqual(targets[0], paragraphAEnd, 'Paragraph A translation should be inserted after the last A paragraph');
+    assert.strictEqual(targets[1], paragraphBEnd, 'Paragraph B translation should be inserted after the B paragraph');
+}
+
+function testPassageNotesUseParagraphWrapperEnd() {
+    const { hooks } = loadHooks();
+    const left = createFakeElement('section');
+    const wrapperA = appendFakeChild(left, createFakeElement('div', '', { className: 'paragraph-wrapper' }));
+    appendFakeChild(wrapperA, createFakeElement('div', 'Section A:', {
+        children: [createFakeElement('span', 'Section A:', { className: 'paragraph-label' })]
+    }));
+    appendFakeChild(wrapperA, createFakeElement('p', 'A first natural paragraph.'));
+    const paragraphAEnd = appendFakeChild(wrapperA, createFakeElement('p', 'A second natural paragraph.'));
+    const wrapperB = appendFakeChild(left, createFakeElement('div', '', { className: 'paragraph-wrapper' }));
+    appendFakeChild(wrapperB, createFakeElement('div', 'Section B:', {
+        children: [createFakeElement('span', 'Section B:', { className: 'paragraph-label' })]
+    }));
+    const paragraphBEnd = appendFakeChild(wrapperB, createFakeElement('p', 'B only paragraph.'));
+
+    const targets = hooks.resolvePassageTargetsForTest(left, [
+        { label: 'Paragraph A', text: 'A translation' },
+        { label: 'Paragraph B', text: 'B translation' }
+    ]);
+
+    assert.strictEqual(targets[0], paragraphAEnd, 'Paragraph A translation should be inserted after the last paragraph in wrapper A');
+    assert.strictEqual(targets[1], paragraphBEnd, 'Paragraph B translation should be inserted after wrapper B content');
+}
+
+function testNumberedPassageNotesSkipIntroParagraph() {
+    const { hooks } = loadHooks();
+    const left = createFakeElement('section');
+    appendFakeChild(left, createFakeElement('p', 'You should spend about 20 minutes on Questions 1-13.'));
+    appendFakeChild(left, createFakeElement('p', 'How a toad introduced...', {
+        children: [createFakeElement('em', 'How a toad introduced...')]
+    }));
+    const firstBody = appendFakeChild(left, createFakeElement('p', 'Body paragraph one.'));
+    const secondBody = appendFakeChild(left, createFakeElement('p', 'Body paragraph two.'));
+
+    const targets = hooks.resolvePassageTargetsForTest(left, [
+        { label: 'Paragraph 1', text: 'first translation' },
+        { label: 'Paragraph 2', text: 'second translation' }
+    ]);
+
+    assert.strictEqual(targets[0], firstBody, 'numbered notes should ignore the italic intro paragraph');
+    assert.strictEqual(targets[1], secondBody, 'numbered notes should preserve body paragraph order');
+}
+
+function testPassageNotesDoNotFallbackToWrongSequentialTargets() {
+    const { hooks } = loadHooks();
+    const letterOnlyLeft = createFakeElement('section');
+    appendFakeChild(letterOnlyLeft, createFakeElement('h3', 'Australia Airborne Dentists'));
+    appendFakeChild(letterOnlyLeft, createFakeElement('p', 'First natural paragraph without a letter marker.'));
+    appendFakeChild(letterOnlyLeft, createFakeElement('p', 'Second natural paragraph without a letter marker.'));
+
+    const letterTargets = hooks.resolvePassageTargetsForTest(letterOnlyLeft, [
+        { label: 'Paragraph A', text: 'combined translation one' },
+        { label: 'Paragraph B', text: 'combined translation two' }
+    ]);
+    assert.strictEqual(
+        letterTargets.length,
+        0,
+        'letter-labelled notes must not fall back to paragraph order when the passage has no matching labels'
+    );
+
+    const mismatchedLeft = createFakeElement('section');
+    appendFakeChild(mismatchedLeft, createFakeElement('h3', 'Plain passage'));
+    appendFakeChild(mismatchedLeft, createFakeElement('p', 'First body paragraph.'));
+    appendFakeChild(mismatchedLeft, createFakeElement('p', 'Second body paragraph.'));
+    const mismatchedTargets = hooks.resolvePassageTargetsForTest(mismatchedLeft, [
+        { text: 'one combined translation' }
+    ]);
+    assert.strictEqual(
+        mismatchedTargets.length,
+        0,
+        'unlabelled notes must not be inserted sequentially when note count and paragraph count differ'
+    );
 }
 
 async function testDraftArbitration() {
@@ -253,6 +437,55 @@ async function testInlineEnvelopeGuard() {
         false,
         'current payload must still be accepted'
     );
+}
+
+async function testReplayPreservesSavedAnswerComparisonJudgement() {
+    const { hooks } = loadHooks();
+
+    const replay = hooks.buildReplayResults({
+        examId: 'p1-high-118',
+        dataKey: 'p1-high-118',
+        answers: {
+            q11: 'C',
+            q12: 'D',
+            q13: 'E'
+        },
+        correctAnswerMap: {
+            q11: 'C',
+            q12: 'D',
+            q13: 'E'
+        },
+        answerComparison: {
+            q11: {
+                questionId: 'q11',
+                userAnswer: ['C', 'D', 'E'],
+                correctAnswer: 'C',
+                isCorrect: true
+            },
+            q12: {
+                questionId: 'q12',
+                userAnswer: ['C', 'D', 'E'],
+                correctAnswer: 'D',
+                isCorrect: true
+            },
+            q13: {
+                questionId: 'q13',
+                userAnswer: ['C', 'D', 'E'],
+                correctAnswer: 'E',
+                isCorrect: true
+            }
+        },
+        scoreInfo: {
+            correct: 3,
+            total: 3,
+            percentage: 100
+        }
+    });
+
+    assert.strictEqual(replay.answerComparison.q11.isCorrect, true, '回放必须保留已保存的题组判题结果');
+    assert.strictEqual(replay.answerComparison.q12.isCorrect, true, '回放不能把题组多选答案重新当单题误判');
+    assert.strictEqual(replay.answerComparison.q13.isCorrect, true, '回放不能覆盖保存时的正确结果');
+    assert.strictEqual(replay.scoreInfo.correct, 3, '回放统计应基于保存的每题判定');
 }
 
 async function testInlineReinitSnapshot() {
@@ -1244,9 +1477,475 @@ async function testWrongReasonSyncUsesUnifiedRecordPathBeforeSqliteDirect() {
     assert.deepStrictEqual(hooks.getWrongReasonSaveState().pendingIds, [], '统一路径保存成功后应清除未保存状态');
 }
 
+function testWrongReasonSupportsMultipleCategories() {
+    const { hooks } = loadHooks();
+    hooks.setWrongReasonTestState({
+        examId: 'p3-high-181',
+        dataKey: 'p3-high-181',
+        lastResults: {
+            answerComparison: {
+                q7: {
+                    questionId: 'q7',
+                    userAnswer: 'wrong',
+                    correctAnswer: 'right',
+                    isCorrect: false
+                }
+            },
+            scoreInfo: {
+                details: {
+                    q7: {
+                        questionId: 'q7',
+                        isCorrect: false
+                    }
+                }
+            }
+        }
+    });
+
+    hooks.updateWrongReasonInResults('q7', {
+        categories: ['定位错误', '单词不认识'],
+        note: 'multi category'
+    });
+    const state = hooks.getTestState();
+    const reason = state.lastResults.answerComparison.q7.wrongReason;
+    assert.strictEqual(reason.category, '定位错误', 'legacy category should keep the first selected reason');
+    assert.deepStrictEqual(plain(reason.categories), ['定位错误', '单词不认识'], 'wrong reason should preserve all selected categories');
+    assert.deepStrictEqual(
+        plain(hooks.collectWrongReasonMap().q7.categories),
+        ['定位错误', '单词不认识'],
+        'wrong reason payload should include all categories'
+    );
+}
+
+function createClassListStub(initial = []) {
+    const values = new Set(initial);
+    return {
+        add(value) {
+            values.add(value);
+        },
+        remove(value) {
+            values.delete(value);
+        },
+        contains(value) {
+            return values.has(value);
+        }
+    };
+}
+
+function testWrongReasonControlsAreNotMarkedAsWrongAnswers() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const answerRadio = {
+        tagName: 'INPUT',
+        type: 'radio',
+        checked: true,
+        value: 'A',
+        dataset: { questionId: 'q6' },
+        classList: createClassListStub(),
+        closest() {
+            return null;
+        }
+    };
+    const wrongReasonCheckbox = {
+        tagName: 'INPUT',
+        type: 'checkbox',
+        checked: true,
+        value: '答案格式错误',
+        dataset: { questionId: 'q6' },
+        classList: createClassListStub(['wrong-reason-category-checkbox']),
+        closest(selector) {
+            return selector === '.wrong-reason-controls' ? {} : null;
+        }
+    };
+    document.querySelectorAll = (selector) => {
+        if (String(selector).includes('q6')) {
+            return [answerRadio, wrongReasonCheckbox];
+        }
+        return [];
+    };
+
+    hooks.markWrongAnswerChoice({
+        questionId: 'q6',
+        userAnswer: 'A',
+        isCorrect: false
+    });
+
+    assert.strictEqual(answerRadio.classList.contains('reading-answer-wrong-choice'), true, 'wrong answer radio should be marked');
+    assert.strictEqual(wrongReasonCheckbox.classList.contains('reading-answer-wrong-choice'), false, 'wrong reason checkbox must not inherit answer error style');
+}
+
+function createMinimalDomNode(tagName) {
+    const node = {
+        tagName: String(tagName || '').toUpperCase(),
+        children: [],
+        parentNode: null,
+        parentElement: null,
+        nextSibling: null,
+        get nextElementSibling() {
+            if (!this.parentNode || !Array.isArray(this.parentNode.children)) {
+                return null;
+            }
+            const index = this.parentNode.children.indexOf(this);
+            return index >= 0 ? this.parentNode.children[index + 1] || null : null;
+        },
+        dataset: {},
+        className: '',
+        innerHTML: '',
+        colSpan: 1,
+        appendChild(child) {
+            if (child) {
+                child.parentNode = this;
+                child.parentElement = this;
+                this.children.push(child);
+            }
+            return child;
+        },
+        insertAdjacentElement(position, child) {
+            if (!this.parentNode || !child) {
+                return child;
+            }
+            const siblings = this.parentNode.children || [];
+            const index = siblings.indexOf(this);
+            const insertAt = position === 'afterend' && index >= 0 ? index + 1 : siblings.length;
+            child.parentNode = this.parentNode;
+            child.parentElement = this.parentNode;
+            siblings.splice(insertAt, 0, child);
+            this.parentNode.inserted = this.parentNode.inserted || [];
+            this.parentNode.inserted.push({ position, reference: this, node: child });
+            return child;
+        },
+        querySelector() {
+            return null;
+        },
+        querySelectorAll() {
+            return [];
+        },
+        closest() {
+            return null;
+        }
+    };
+    return node;
+}
+
+function testInlineWrongReasonUsesTableWideRow() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const table = createMinimalDomNode('table');
+    table.querySelectorAll = (selector) => (
+        selector === 'thead tr:first-child th'
+            ? Array.from({ length: 8 }, () => createMinimalDomNode('th'))
+            : []
+    );
+    const tbody = createMinimalDomNode('tbody');
+    const questionRow = createMinimalDomNode('tr');
+    questionRow.children = Array.from({ length: 8 }, () => createMinimalDomNode('td'));
+    questionRow.parentNode = tbody;
+    questionRow.parentElement = tbody;
+    questionRow.closest = (selector) => (selector === 'table' ? table : null);
+    tbody.inserted = [];
+    tbody.insertBefore = (node) => {
+        node.parentNode = tbody;
+        node.parentElement = tbody;
+        tbody.inserted.push(node);
+        return node;
+    };
+
+    const answerRadio = {
+        tagName: 'INPUT',
+        type: 'radio',
+        checked: true,
+        value: 'C',
+        dataset: {},
+        classList: createClassListStub(),
+        closest(selector) {
+            return String(selector || '').includes('tr') ? questionRow : null;
+        }
+    };
+
+    document.createElement = createMinimalDomNode;
+    document.getElementById = () => null;
+    document.querySelector = () => null;
+    document.querySelectorAll = (selector) => (
+        String(selector || '').includes('name="q1"') ? [answerRadio] : []
+    );
+
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q1',
+        isCorrect: false,
+        userAnswer: 'C',
+        correctAnswer: 'E'
+    });
+
+    assert.strictEqual(tbody.inserted.length, 1, 'table question should receive one extra table row');
+    const insertedRow = tbody.inserted[0];
+    assert.strictEqual(insertedRow.tagName, 'TR');
+    assert.strictEqual(insertedRow.className, 'reading-inline-wrong-reason-row');
+    assert.strictEqual(insertedRow.dataset.questionId, 'q1');
+    assert.strictEqual(insertedRow.children.length, 1);
+    assert.strictEqual(insertedRow.children[0].tagName, 'TD');
+    assert.strictEqual(insertedRow.children[0].colSpan, 8, 'wrong reason row should span the matching table');
+    assert(insertedRow.children[0].innerHTML.includes('wrong-reason-controls'), 'wrong reason controls should live inside the spanning cell');
+}
+
+function testInlineWrongReasonUsesQuestionBlockHost() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const parent = createMinimalDomNode('div');
+    const questionBlock = createMinimalDomNode('div');
+    questionBlock.className = 'question-block';
+    const yesNoGroup = createMinimalDomNode('div');
+    yesNoGroup.className = 'yesno-group';
+    const answerRadio = createMinimalDomNode('input');
+    answerRadio.type = 'radio';
+    answerRadio.checked = true;
+    answerRadio.value = 'FALSE';
+    answerRadio.name = 'q1';
+    answerRadio.classList = createClassListStub();
+    answerRadio.closest = (selector) => (
+        String(selector || '').includes('.question-block') ? questionBlock : null
+    );
+    parent.appendChild(questionBlock);
+    questionBlock.appendChild(yesNoGroup);
+    yesNoGroup.appendChild(answerRadio);
+
+    document.createElement = createMinimalDomNode;
+    document.getElementById = () => null;
+    document.querySelector = () => null;
+    document.querySelectorAll = (selector) => (
+        String(selector || '').includes('name="q1"') ? [answerRadio] : []
+    );
+
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q1',
+        isCorrect: false,
+        userAnswer: 'FALSE',
+        correctAnswer: 'TRUE'
+    });
+
+    assert.strictEqual(parent.inserted.length, 1, 'wrong reason panel should be inserted after the question block');
+    assert.strictEqual(parent.inserted[0].reference, questionBlock);
+    assert.strictEqual(parent.inserted[0].node.className, 'reading-inline-wrong-reason');
+    assert.strictEqual(parent.inserted[0].node.dataset.questionId, 'q1');
+}
+
+function testInlineWrongReasonUsesFlowchartItemHost() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const parent = createMinimalDomNode('div');
+    const flowchartItem = createMinimalDomNode('div');
+    flowchartItem.className = 'flowchart-item';
+    const answerInput = createMinimalDomNode('input');
+    answerInput.type = 'text';
+    answerInput.value = 'fourth';
+    answerInput.name = 'q10';
+    answerInput.classList = createClassListStub();
+    answerInput.closest = (selector) => (
+        String(selector || '').includes('.flowchart-item') ? flowchartItem : null
+    );
+    parent.appendChild(flowchartItem);
+    flowchartItem.appendChild(answerInput);
+
+    document.createElement = createMinimalDomNode;
+    document.getElementById = () => null;
+    document.querySelector = () => null;
+    document.querySelectorAll = (selector) => (
+        String(selector || '').includes('name="q10"') ? [answerInput] : []
+    );
+
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q10',
+        isCorrect: false,
+        userAnswer: 'fourth',
+        correctAnswer: 'seventh'
+    });
+
+    assert.strictEqual(parent.inserted.length, 1, 'flow-chart wrong reason panel should be inserted after the full flowchart item');
+    assert.strictEqual(parent.inserted[0].reference, flowchartItem);
+    assert.strictEqual(parent.inserted[0].node.className, 'reading-inline-wrong-reason');
+    assert.strictEqual(parent.inserted[0].node.dataset.questionId, 'q10');
+}
+
+function testInlineWrongReasonUsesDiagramInputItemHost() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const parent = createMinimalDomNode('div');
+    const diagramInputItem = createMinimalDomNode('div');
+    diagramInputItem.className = 'diagram-input-item';
+    const answerInput = createMinimalDomNode('input');
+    answerInput.type = 'text';
+    answerInput.value = 'jet';
+    answerInput.name = 'q1';
+    answerInput.classList = createClassListStub();
+    answerInput.closest = (selector) => (
+        String(selector || '').includes('.diagram-input-item') ? diagramInputItem : null
+    );
+    parent.appendChild(diagramInputItem);
+    diagramInputItem.appendChild(answerInput);
+
+    document.createElement = createMinimalDomNode;
+    document.getElementById = () => null;
+    document.querySelector = () => null;
+    document.querySelectorAll = (selector) => (
+        String(selector || '').includes('name="q1"') ? [answerInput] : []
+    );
+
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q1',
+        isCorrect: false,
+        userAnswer: 'jet',
+        correctAnswer: 'hammer'
+    });
+
+    assert.strictEqual(parent.inserted.length, 1, 'diagram label wrong reason panel should be inserted after its input item');
+    assert.strictEqual(parent.inserted[0].reference, diagramInputItem);
+    assert.strictEqual(parent.inserted[0].node.className, 'reading-inline-wrong-reason');
+    assert.strictEqual(parent.inserted[0].node.dataset.questionId, 'q1');
+}
+
+function testInlineWrongReasonKeepsSharedParagraphOrder() {
+    const { hooks, window } = loadHooks();
+    const document = window.document;
+    const parent = createMinimalDomNode('div');
+    const paragraph = createMinimalDomNode('p');
+    const input10 = createMinimalDomNode('input');
+    const input11 = createMinimalDomNode('input');
+    input10.type = 'text';
+    input10.name = 'q10';
+    input10.classList = createClassListStub();
+    input11.type = 'text';
+    input11.name = 'q11';
+    input11.classList = createClassListStub();
+    input10.closest = (selector) => (String(selector || '').includes('p') ? paragraph : null);
+    input11.closest = (selector) => (String(selector || '').includes('p') ? paragraph : null);
+    parent.appendChild(paragraph);
+    paragraph.appendChild(input10);
+    paragraph.appendChild(input11);
+
+    document.createElement = createMinimalDomNode;
+    document.getElementById = () => null;
+    document.querySelector = () => null;
+    document.querySelectorAll = (selector) => {
+        const text = String(selector || '');
+        if (text.includes('name="q10"')) return [input10];
+        if (text.includes('name="q11"')) return [input11];
+        return [];
+    };
+
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q10',
+        isCorrect: false,
+        userAnswer: 'p',
+        correctAnswer: 'F'
+    });
+    hooks.insertInlineWrongReasonControls({
+        questionId: 'q11',
+        isCorrect: false,
+        userAnswer: 's',
+        correctAnswer: 'A'
+    });
+
+    const siblings = parent.children.filter((child) => child.className === 'reading-inline-wrong-reason');
+    assert.deepStrictEqual(
+        siblings.map((node) => node.dataset.questionId),
+        ['q10', 'q11'],
+        'multiple wrong reason panels sharing one paragraph host should keep question order'
+    );
+}
+
+async function testStandaloneSubmitSavesCompletionWhenNoParentReceivesMessage() {
+    const { hooks, window } = loadHooks();
+    let savedPayload = null;
+    let savedContext = null;
+    let savedExamEntry = null;
+    window.PracticeRecordAPI = {
+        async saveCompletion(payload, context, examEntry) {
+            savedPayload = JSON.parse(JSON.stringify(payload));
+            savedContext = JSON.parse(JSON.stringify(context));
+            savedExamEntry = JSON.parse(JSON.stringify(examEntry));
+            return {
+                id: `record_${context.sessionId}`,
+                sessionId: context.sessionId,
+                examId: context.examId
+            };
+        }
+    };
+    hooks.setTestOverride('renderExplanations', async () => {});
+    hooks.setTestState({
+        examId: 'p3-high-181',
+        dataKey: 'p3-high-181',
+        dataset: {
+            meta: {
+                title: 'The Fruit Book 果实之书',
+                category: 'P3',
+                frequency: 'high'
+            },
+            answerKey: {
+                q1: 'A'
+            },
+            questionOrder: ['q1']
+        }
+    });
+
+    await hooks.handleSubmit();
+
+    assert(savedPayload, 'standalone submit should save completion when postMessage has no receiver');
+    assert.strictEqual(savedPayload.examId, 'p3-high-181');
+    assert.strictEqual(savedPayload.dataKey, 'p3-high-181');
+    assert(savedPayload.sessionId.startsWith('p3-high-181_'), 'standalone submit should create a stable article-prefixed session id');
+    assert.strictEqual(savedContext.examId, 'p3-high-181');
+    assert.strictEqual(savedContext.metadata.examTitle, 'The Fruit Book 果实之书');
+    assert.strictEqual(savedExamEntry.title, 'The Fruit Book 果实之书');
+}
+
+async function testReviewModeSubmitDoesNotCreateStandaloneCompletion() {
+    const { hooks, window } = loadHooks();
+    let saveCalls = 0;
+    window.PracticeRecordAPI = {
+        async saveCompletion() {
+            saveCalls += 1;
+            return { id: 'unexpected-review-record' };
+        }
+    };
+    hooks.setTestOverride('renderExplanations', async () => {});
+    hooks.setTestState({
+        reviewMode: true,
+        readOnly: false,
+        examId: 'p1-low-116',
+        dataKey: 'p1-low-116',
+        dataset: {
+            meta: {
+                title: 'Advertising Needs Attention 广告的吸引力',
+                category: 'P1',
+                frequency: 'low'
+            },
+            answerKey: {
+                q1: 'A'
+            },
+            questionOrder: ['q1']
+        }
+    });
+
+    await hooks.handleSubmit();
+
+    assert.strictEqual(saveCalls, 0, 'review mode must not create a standalone completion record');
+}
+
+function testLegacyOptionsLabelsUseBlockLayout() {
+    const html = fs.readFileSync(
+        path.join(repoRoot, 'assets/generated/reading-exams/reading-practice-unified.html'),
+        'utf8'
+    );
+    assert(html.includes('.options label,'), 'legacy .options labels should share the block option layout');
+    assert(
+        html.includes('.options label input[type="radio"],'),
+        'legacy .options radio inputs should share the aligned radio layout'
+    );
+}
+
 async function main() {
     await testDraftArbitration();
     await testInlineEnvelopeGuard();
+    await testReplayPreservesSavedAnswerComparisonJudgement();
     await testInlineReinitSnapshot();
     await testWindowSessionMessageGuard();
     await testWrongReasonSaveVerifiesPersistedRecord();
@@ -1259,6 +1958,20 @@ async function main() {
     await testWrongReasonSavePrefersCompletedRecordOverFallbackDuplicate();
     await testWrongReasonSaveDoesNotCreateRecordWhenTargetMissing();
     await testWrongReasonSyncUsesUnifiedRecordPathBeforeSqliteDirect();
+    testWrongReasonSupportsMultipleCategories();
+    testWrongReasonControlsAreNotMarkedAsWrongAnswers();
+    testInlineWrongReasonUsesTableWideRow();
+    testInlineWrongReasonUsesQuestionBlockHost();
+    testInlineWrongReasonUsesFlowchartItemHost();
+    testInlineWrongReasonUsesDiagramInputItemHost();
+    testInlineWrongReasonKeepsSharedParagraphOrder();
+    await testStandaloneSubmitSavesCompletionWhenNoParentReceivesMessage();
+    await testReviewModeSubmitDoesNotCreateStandaloneCompletion();
+    testLegacyOptionsLabelsUseBlockLayout();
+    testPassageNotesUseLabelsInsteadOfParagraphOrder();
+    testPassageNotesUseParagraphWrapperEnd();
+    testNumberedPassageNotesSkipIntroParagraph();
+    testPassageNotesDoNotFallbackToWrongSequentialTargets();
     process.stdout.write(JSON.stringify({
         status: 'pass',
         detail: 'unified reading inline suite regressions covered'

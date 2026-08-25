@@ -1,31 +1,39 @@
 (function initReadingHighlightShared(global) {
     'use strict';
 
-    const EXPLANATION_NODE_SELECTOR = [
+    const HIGHLIGHT_EXCLUDED_NODE_SELECTOR = [
         '.reading-explanation-card',
         '.reading-group-explanation',
         '.reading-question-explanation',
-        '.reading-question-explanation-list'
+        '.reading-question-explanation-list',
+        '.wrong-reason-controls',
+        '.reading-inline-wrong-reason',
+        '.reading-inline-wrong-reason-row'
     ].join(', ');
+    const EXPLANATION_NODE_SELECTOR = HIGHLIGHT_EXCLUDED_NODE_SELECTOR;
 
     function isHighlightNode(node) {
         return node instanceof Element && node.classList.contains('hl');
     }
 
-    function isExplanationNode(node) {
-        return node instanceof Element && node.matches(EXPLANATION_NODE_SELECTOR);
+    function isExcludedNode(node) {
+        return node instanceof Element && node.matches(HIGHLIGHT_EXCLUDED_NODE_SELECTOR);
     }
 
-    function isInsideExplanation(node) {
+    const isExplanationNode = isExcludedNode;
+
+    function isInsideExcludedNode(node) {
         let current = node instanceof Element ? node : node?.parentElement;
         while (current) {
-            if (isExplanationNode(current)) {
+            if (isExcludedNode(current)) {
                 return true;
             }
             current = current.parentElement;
         }
         return false;
     }
+
+    const isInsideExplanation = isInsideExcludedNode;
 
     function getTextNodes(root) {
         const nodes = [];
@@ -34,7 +42,7 @@
         }
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
-                return isInsideExplanation(node)
+                return isInsideExcludedNode(node)
                     ? NodeFilter.FILTER_REJECT
                     : NodeFilter.FILTER_ACCEPT;
             }
@@ -60,9 +68,6 @@
     function unwrapHighlights(root) {
         if (!root) return;
         root.querySelectorAll('.hl').forEach((highlight) => {
-            if (isInsideExplanation(highlight)) {
-                return;
-            }
             const parent = highlight.parentNode;
             if (!parent) return;
             while (highlight.firstChild) {
@@ -76,9 +81,6 @@
     function unwrapMatchingHighlights(root, selector) {
         if (!root || !selector) return;
         Array.from(root.querySelectorAll(selector)).forEach((highlight) => {
-            if (isInsideExplanation(highlight)) {
-                return;
-            }
             const parent = highlight.parentNode;
             if (!parent) return;
             while (highlight.firstChild) {
@@ -129,7 +131,14 @@
         return node.dataset && node.dataset.hlType === 'note' ? 'note' : 'highlight';
     }
 
-    function applyHighlightKind(node, kind = 'highlight') {
+    function resolveHighlightLevel(node) {
+        if (!(node instanceof HTMLElement)) {
+            return 'primary';
+        }
+        return node.dataset && node.dataset.hlLevel === 'secondary' ? 'secondary' : 'primary';
+    }
+
+    function applyHighlightKind(node, kind = 'highlight', level = 'primary') {
         if (!(node instanceof HTMLElement)) {
             return;
         }
@@ -138,6 +147,11 @@
             node.dataset.hlType = 'note';
         } else {
             delete node.dataset.hlType;
+        }
+        if (level === 'secondary') {
+            node.dataset.hlLevel = 'secondary';
+        } else {
+            delete node.dataset.hlLevel;
         }
     }
 
@@ -152,7 +166,7 @@
             const cursorByText = new Map();
             const fullText = getText(root);
             Array.from(root.querySelectorAll('.hl')).forEach((node) => {
-                if (isInsideExplanation(node)) return;
+                if (isInsideExcludedNode(node)) return;
                 const text = String(node.textContent || '').trim();
                 if (!text) return;
                 const key = `${scope}::${text}`;
@@ -175,6 +189,7 @@
                     scope,
                     text,
                     kind: resolveHighlightKind(node),
+                    level: resolveHighlightLevel(node),
                     occurrence: seen,
                     start: startOffset,
                     end: endOffset,
@@ -197,6 +212,7 @@
             return;
         }
         const highlightKind = record.kind === 'note' ? 'note' : 'highlight';
+        const highlightLevel = record.level === 'secondary' ? 'secondary' : 'primary';
         const normalizedRecordText = normalizeComparableText(record.text);
         const startOffset = Number(
             Object.prototype.hasOwnProperty.call(record, 'start')
@@ -208,17 +224,21 @@
                 ? record.end
                 : record.endOffset
         );
-        const expectedBefore = normalizeComparableText(record.before);
-        const expectedAfter = normalizeComparableText(record.after);
+        const rawExpectedBefore = String(record.before || '');
+        const rawExpectedAfter = String(record.after || '');
+        const expectedBefore = normalizeComparableText(rawExpectedBefore);
+        const expectedAfter = normalizeComparableText(rawExpectedAfter);
         const occurrence = Number.isFinite(Number(record.occurrence)) ? Number(record.occurrence) : 0;
         const hasOffsetSnapshot = Number.isFinite(startOffset)
             && Number.isFinite(endOffset)
             && endOffset > startOffset;
 
-        const offsetMatchByContext = (candidateStart) => {
-            const candidateEnd = candidateStart + String(record.text || '').length;
-            const candidateBefore = fullText.slice(Math.max(0, candidateStart - expectedBefore.length), candidateStart);
-            const candidateAfter = fullText.slice(candidateEnd, candidateEnd + expectedAfter.length);
+        const offsetMatchByContext = (candidateStart, candidateLength = String(record.text || '').length) => {
+            const candidateEnd = candidateStart + candidateLength;
+            const beforeLength = rawExpectedBefore.length || expectedBefore.length;
+            const afterLength = rawExpectedAfter.length || expectedAfter.length;
+            const candidateBefore = fullText.slice(Math.max(0, candidateStart - beforeLength), candidateStart);
+            const candidateAfter = fullText.slice(candidateEnd, candidateEnd + afterLength);
             const normalizedBefore = normalizeComparableText(candidateBefore);
             const normalizedAfter = normalizeComparableText(candidateAfter);
             if (expectedBefore && !normalizedBefore.endsWith(expectedBefore)) {
@@ -228,6 +248,33 @@
                 return false;
             }
             return true;
+        };
+        const hasContextSnapshot = Boolean(expectedBefore || expectedAfter);
+        const chooseTextMatch = (matchProvider) => {
+            let match = null;
+            let ordinal = 0;
+            let occurrenceFallback = null;
+            let firstContextMatch = null;
+            while ((match = matchProvider()) !== null) {
+                const candidateStart = Number(match.index);
+                const candidateLength = Number(match.length) || String(record.text || '').length;
+                if (ordinal === occurrence) {
+                    occurrenceFallback = { index: candidateStart, length: candidateLength };
+                }
+                if (offsetMatchByContext(candidateStart, candidateLength)) {
+                    if (ordinal === occurrence) {
+                        return { index: candidateStart, length: candidateLength };
+                    }
+                    if (!firstContextMatch) {
+                        firstContextMatch = { index: candidateStart, length: candidateLength };
+                    }
+                }
+                ordinal += 1;
+            }
+            if (hasContextSnapshot && firstContextMatch) {
+                return firstContextMatch;
+            }
+            return occurrenceFallback;
         };
 
         if (
@@ -243,11 +290,11 @@
                 || normalizedSegment === normalizedRecordText
                 || normalizedSegment.includes(normalizedRecordText)
                 || normalizedRecordText.includes(normalizedSegment);
-            if (offsetLooksValid) {
+            if (offsetLooksValid && (!hasContextSnapshot || offsetMatchByContext(startOffset, endOffset - startOffset))) {
                 const offsetRange = resolveRangeFromOffsets(root, startOffset, endOffset);
                 if (offsetRange && !offsetRange.collapsed) {
                     const offsetSpan = document.createElement('span');
-                    applyHighlightKind(offsetSpan, highlightKind);
+                    applyHighlightKind(offsetSpan, highlightKind, highlightLevel);
                     try {
                         offsetRange.surroundContents(offsetSpan);
                         return true;
@@ -260,10 +307,19 @@
         let cursor = 0;
         let hit = -1;
         let matchedLength = String(record.text || '').length;
-        for (let index = 0; index <= occurrence; index += 1) {
-            hit = fullText.indexOf(record.text, cursor);
-            if (hit < 0) break;
-            cursor = hit + record.text.length;
+        if (record.text) {
+            const exactMatch = chooseTextMatch(() => {
+                const index = fullText.indexOf(record.text, cursor);
+                if (index < 0) {
+                    return null;
+                }
+                cursor = index + record.text.length;
+                return { index, length: record.text.length };
+            });
+            if (exactMatch) {
+                hit = exactMatch.index;
+                matchedLength = exactMatch.length;
+            }
         }
         if (hit < 0 && normalizedRecordText) {
             const escapedTokens = normalizedRecordText
@@ -272,18 +328,20 @@
                 .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
             if (escapedTokens.length) {
                 const pattern = new RegExp(escapedTokens.join('\\s+'), 'g');
-                let matched = null;
-                let index = 0;
-                while ((matched = pattern.exec(fullText)) !== null) {
-                    if (index === occurrence) {
-                        hit = matched.index;
-                        matchedLength = String(matched[0] || '').length || matchedLength;
-                        break;
+                const fuzzyMatch = chooseTextMatch(() => {
+                    const matched = pattern.exec(fullText);
+                    if (!matched) {
+                        return null;
                     }
-                    index += 1;
+                    const length = String(matched[0] || '').length || matchedLength;
                     if (pattern.lastIndex === matched.index) {
                         pattern.lastIndex += 1;
                     }
+                    return { index: matched.index, length };
+                });
+                if (fuzzyMatch) {
+                    hit = fuzzyMatch.index;
+                    matchedLength = fuzzyMatch.length || matchedLength;
                 }
             }
         }
@@ -295,7 +353,7 @@
             return false;
         }
         const span = document.createElement('span');
-        applyHighlightKind(span, highlightKind);
+        applyHighlightKind(span, highlightKind, highlightLevel);
         try {
             range.surroundContents(span);
             return true;
@@ -337,7 +395,7 @@
         if (!node || !node.nodeValue || !node.nodeValue.trim()) {
             return true;
         }
-        if (isInsideExplanation(node)) {
+        if (isInsideExcludedNode(node)) {
             return true;
         }
         return !!closestElement(node, skipSelector || '.hl');

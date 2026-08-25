@@ -167,6 +167,7 @@ function makeSession(sessionId = 'suite_test_1') {
 async function run() {
     const { sandbox, windowStub, sessionStorageStub } = createSandbox();
     const context = vm.createContext(sandbox);
+    loadScript('js/utils/suitePreference.js', context);
     loadScript('js/app/examSessionMixin.js', context);
     loadScript('js/app/suitePracticeMixin.js', context);
 
@@ -1658,6 +1659,78 @@ async function run() {
         );
         assert.strictEqual(restartCount, 1, 'reset 后必须重启握手');
         assert(statuses.some(item => item.examId === examId && item.status === 'in-progress'), 'reset 后题源状态应回到 in-progress');
+    }
+
+    // Case 14: 仅高频套题不能在高频不足时混入低频文章
+    {
+        const app = createApp(windowStub);
+        app._suiteModeReady = true;
+        app.currentSuiteSession = null;
+        app.openExam = () => {};
+        app._collectPracticedReadingExamIds = async () => new Set(['p1-high-practiced']);
+        app._fetchSuiteExamIndex = async () => [
+            { id: 'p1-low-plant', title: 'Scented Plants 植物的味道', type: 'reading', category: 'P1', frequency: 'low' },
+            { id: 'p1-missing-frequency', title: 'Missing Frequency P1', type: 'reading', category: 'P1' },
+            { id: 'p1-high-practiced', title: 'P1 High Practiced', type: 'reading', category: 'P1', frequency: '高频' },
+            { id: 'p2-high-new', title: 'P2 High New', type: 'reading', category: 'P2', frequency: '高频' },
+            { id: 'p3-high-new', title: 'P3 High New', type: 'reading', category: 'P3', frequency: 'ultra-high' }
+        ];
+        let launchedSequence = null;
+        app._launchSuiteSessionFromSequence = async (sequence) => {
+            launchedSequence = sequence;
+            return true;
+        };
+
+        await app.startSuitePractice({ frequencyScope: 'high', flowMode: 'simulation' });
+
+        assert(launchedSequence, '高频题库足够时应启动套题');
+        assert.strictEqual(
+            launchedSequence.map(item => item.examId).join('|'),
+            'p1-high-practiced|p2-high-new|p3-high-new',
+            '仅高频不足未做题时，只能在高频内放宽为已做题，不能混入低频或未知频率'
+        );
+    }
+
+    // Case 15: 自选套题的状态层不能接受当前频率范围外的文章
+    {
+        loadScript('js/app/state-service.js', context);
+        const service = windowStub.AppStateService.getInstance();
+        service.setCustomSuiteDraft({
+            status: 'selecting',
+            stageIndex: 0,
+            categories: ['P1', 'P2', 'P3'],
+            pickedByCategory: {},
+            pickedOrder: [],
+            flowMode: 'simulation',
+            frequencyScope: 'high'
+        });
+
+        const afterLowPick = service.selectCustomSuiteExam({
+            id: 'p1-low-plant',
+            title: 'Scented Plants 植物的味道',
+            category: 'P1',
+            type: 'reading',
+            frequency: 'low'
+        });
+        assert.strictEqual(afterLowPick.pickedOrder.length, 0, '仅高频自选不得接受低频文章');
+
+        const afterUnknownPick = service.selectCustomSuiteExam({
+            id: 'p1-unknown-frequency',
+            title: 'Unknown Frequency P1',
+            category: 'P1',
+            type: 'reading'
+        });
+        assert.strictEqual(afterUnknownPick.pickedOrder.length, 0, '仅高频自选不得接受未知频率文章');
+
+        const afterHighPick = service.selectCustomSuiteExam({
+            id: 'p1-high-ok',
+            title: 'P1 High OK',
+            category: 'P1',
+            type: 'reading',
+            frequency: '高频'
+        });
+        assert.strictEqual(afterHighPick.pickedOrder.length, 1, '仅高频自选应接受高频文章');
+        assert.strictEqual(afterHighPick.pickedOrder[0].examId, 'p1-high-ok');
     }
 
     process.stdout.write(JSON.stringify({ status: 'pass', detail: 'simulation mode regression cases passed' }));

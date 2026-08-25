@@ -119,6 +119,21 @@
         return null;
     }
 
+    function resolveVocabState(data) {
+        if (!data || typeof data !== 'object') return null;
+        if (isPlainObject(data.vocab_state)) return data.vocab_state;
+        if (isPlainObject(data.vocabState)) return data.vocabState;
+        return null;
+    }
+
+    async function captureVocabState() {
+        if (global.VocabStore && typeof global.VocabStore.captureSnapshot === 'function') {
+            return await global.VocabStore.captureSnapshot();
+        }
+        const metaValue = await readMeta('vocab_state', null).catch(() => null);
+        return isPlainObject(metaValue) ? metaValue : null;
+    }
+
     /**
      * Canonical dual-schema payload so any legacy restore path can read snake or camel keys.
      */
@@ -128,6 +143,7 @@
         const stats = resolveUserStats(source);
         const examIndex = resolveExamIndex(source);
         const storageVersion = resolveStorageVersion(source);
+        const vocabState = resolveVocabState(source);
         const payload = { ...source };
 
         if (records) {
@@ -146,6 +162,10 @@
             payload.storage_version = storageVersion;
             payload.storageVersion = storageVersion;
         }
+        if (vocabState) {
+            payload.vocab_state = vocabState;
+            payload.vocabState = vocabState;
+        }
         return payload;
     }
 
@@ -163,12 +183,14 @@
 
         const examIndex = await readMeta('exam_index', []);
         const storageVersion = await readMeta('storage_version', null);
+        const vocabState = await captureVocabState();
 
         return normalizePayload({
             practice_records: practiceRecords,
             user_stats: userStats,
             exam_index: Array.isArray(examIndex) ? examIndex : [],
             storage_version: storageVersion,
+            vocab_state: vocabState,
             ...(isPlainObject(extra) ? extra : {})
         });
     }
@@ -262,9 +284,11 @@
         const stats = resolveUserStats(payload);
         const examIndex = resolveExamIndex(payload);
         const storageVersion = resolveStorageVersion(payload);
+        const vocabState = resolveVocabState(payload);
         const restoreRecords = options.restoreRecords !== false;
         const restoreExamIndex = options.restoreExamIndex !== false;
         const restoreStorageVersion = options.restoreStorageVersion !== false;
+        const restoreVocab = options.restoreVocab !== false;
 
         if (restoreRecords && records != null) {
             if (Array.isArray(records) && records.length === 0 && options.allowEmptyRestore !== true) {
@@ -291,6 +315,14 @@
             await writeMeta('storage_version', storageVersion);
         }
 
+        if (restoreVocab && vocabState) {
+            if (global.VocabStore && typeof global.VocabStore.restoreSnapshot === 'function') {
+                await global.VocabStore.restoreSnapshot(vocabState, { syncBackend: true, source: 'backup' });
+            } else {
+                await writeMeta('vocab_state', vocabState);
+            }
+        }
+
         // Optional system settings (DataIntegrityManager snapshots)
         if (isPlainObject(payload.system_settings)) {
             const repos = getRepositories();
@@ -304,7 +336,8 @@
             restoredRecords: records != null,
             restoredStats: isPlainObject(stats),
             restoredExamIndex: Boolean(restoreExamIndex && examIndex),
-            restoredStorageVersion: Boolean(restoreStorageVersion && storageVersion != null)
+            restoredStorageVersion: Boolean(restoreStorageVersion && storageVersion != null),
+            restoredVocab: Boolean(restoreVocab && vocabState)
         };
     }
 
@@ -391,6 +424,7 @@
         resolvePracticeRecords,
         resolveUserStats,
         resolveExamIndex,
-        resolveStorageVersion
+        resolveStorageVersion,
+        resolveVocabState
     };
 })(typeof window !== 'undefined' ? window : globalThis);

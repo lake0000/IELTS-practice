@@ -33,7 +33,7 @@
         const normalizedScope = ['high', 'high_medium', 'custom'].includes(scope) ? scope : 'all';
         const normalizedFrequency = String(frequency == null ? '' : frequency).trim().toLowerCase();
         if (!normalizedFrequency) {
-            return true;
+            return normalizedScope === 'all' || normalizedScope === 'custom';
         }
         if (normalizedScope === 'high') {
             return ['high', '高频', 'ultra-high', '超高频', 'high frequency'].includes(normalizedFrequency);
@@ -42,6 +42,17 @@
             return ['high', 'medium', 'mid', '高频', '次高频', '中频', 'ultra-high', 'very-high', 'high frequency', 'medium frequency'].includes(normalizedFrequency);
         }
         return true;
+    }
+
+    function formatSuiteFrequencyScopeLabel(scope) {
+        const normalizedScope = ['high', 'high_medium'].includes(scope) ? scope : 'all';
+        if (normalizedScope === 'high') {
+            return '仅高频';
+        }
+        if (normalizedScope === 'high_medium') {
+            return '高频+次高频';
+        }
+        return '全部频率';
     }
 
     const mixin = {
@@ -2283,9 +2294,14 @@
 
             const categories = this._getCustomSuiteCategories();
             for (const category of categories) {
-                const pool = normalizedIndex.filter(item => item.category === category);
+                const pool = normalizedIndex.filter(item => (
+                    item.category === category && isFrequencyInScope(item && item.frequency, frequencyScope)
+                ));
                 if (!pool.length) {
-                    window.showMessage && window.showMessage('当前题库缺少 ' + category + ' 阅读题目，无法启动自选流程。', 'warning');
+                    window.showMessage && window.showMessage(
+                        '当前抽题范围（' + formatSuiteFrequencyScopeLabel(frequencyScope) + '）缺少 ' + category + ' 阅读题目，无法启动自选流程。',
+                        'warning'
+                    );
                     return false;
                 }
             }
@@ -3175,8 +3191,6 @@
     global.ExamSystemAppMixins = global.ExamSystemAppMixins || {};
     global.ExamSystemAppMixins.suitePractice = mixin;
 })(typeof window !== 'undefined' ? window : globalThis);
-
-
 
 
 

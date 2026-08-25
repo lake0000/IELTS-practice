@@ -71,21 +71,56 @@ def main():
         backup_payload = {
             "practice_records": [make_record("seed-record", "p1-medium-63", "Seed")],
             "user_stats": {"totalPractices": 1, "totalTimeSpent": 120, "averageScore": 1},
+            "vocab_state": {
+                "schemaVersion": "VocabStateV1",
+                "activeListId": "default",
+                "config": {"masteryCount": 4},
+                "reviewQueue": ["word-1"],
+                "lists": {
+                    "default": {
+                        "id": "default",
+                        "words": [{"id": "word-1", "word": "exact", "meaning": "精确的", "correctCount": 2}],
+                    }
+                },
+            },
         }
         (backup_dir / module.LATEST_FILENAME).write_text(
             json.dumps(backup_payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        exam_dir = root / "assets" / "generated" / "reading-exams"
+        exam_dir.mkdir(parents=True, exist_ok=True)
+        (exam_dir / "p1-high-99.js").write_text(
+            """(function registerReadingExamData(global) {
+  'use strict';
+  global.__READING_EXAM_DATA__ = global.__READING_EXAM_DATA__ || { register: function(id, data) { this[id] = data; } };
+  global.__READING_EXAM_DATA__.register("p1-high-99", {
+    "schemaVersion": "ReadingExamSourceV1",
+    "examId": "p1-high-99",
+    "meta": {"title": "Saved", "category": "P1", "frequency": "high"},
+    "passage": {"blocks": [{"kind": "html", "html": "<h2>READING PASSAGE 1</h2><h3>Saved Passage</h3><p><strong>A</strong> This is the original passage paragraph.</p>"}]},
+    "questionGroups": [{"groupId": "group-1", "kind": "short_answer", "questionIds": ["q1"], "bodyHtml": "<div class=\\"group\\"><h4>Questions 1</h4><div class=\\"question-item\\"><span class=\\"q-number\\">1</span> What is the sample question? <input name=\\"q1\\" type=\\"text\\"></div></div>"}],
+    "answerKey": {"q1": "B"},
+    "questionOrder": ["q1"],
+    "questionDisplayMap": {"q1": "1"}
+  });
+})(typeof window !== "undefined" ? window : globalThis);
+""",
             encoding="utf-8",
         )
 
         store = module.PracticeSqliteStore(db_path)
         seed = module.seed_database_from_latest_backup(store, backup_dir)
         assert seed["seeded"] is True
+        assert seed["vocabStateSeeded"] is True
         assert store.count_records() == 1
+        assert store.read_meta("vocab_state", {})["lists"]["default"]["words"][0]["word"] == "exact"
 
         class TestHandler(module.LocalBackupHandler):
             pass
 
         TestHandler.backup_dir = backup_dir
+        TestHandler.content_root = root
         TestHandler.sqlite_store = store
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), TestHandler)
@@ -98,11 +133,41 @@ def main():
             assert data["recordCount"] == 1
 
             new_record = make_record("saved-record", "p1-high-99", "Saved")
+            new_record.update({
+                "score": 0,
+                "correctAnswers": 0,
+                "accuracy": 0,
+                "answerComparison": {
+                    "q1": {
+                        "questionId": "q1",
+                        "userAnswer": "A",
+                        "correctAnswer": "B",
+                        "isCorrect": False,
+                    }
+                },
+                "wrongReasons": {
+                    "q1": {
+                        "category": "定位错误",
+                        "note": "export note",
+                    }
+                },
+            })
             status, data = request_json(port, "POST", "/api/sqlite/practice-records", {"record": new_record})
             assert status == 200 and data["record"]["id"] == "saved-record"
 
             status, data = request_json(port, "GET", "/api/sqlite/practice-records/saved-record")
             assert status == 200 and data["record"]["examId"] == "p1-high-99"
+
+            status, data = request_json(port, "POST", "/api/sqlite/practice-records/full-wrong-export", {"ids": ["saved-record"]})
+            assert status == 200 and data["ok"] is True
+            export = data["export"]
+            assert export["schemaVersion"] == "PracticeFullWrongExportV1"
+            exported_passage = export["records"][0]["passages"][0]
+            assert "original passage paragraph" in exported_passage["passage"]["paragraphs"][0]["text"]
+            assert "sample question" in exported_passage["questionGroups"][0]["questions"][0]["text"]
+            assert exported_passage["wrongQuestions"][0]["userAnswer"] == "A"
+            assert exported_passage["wrongQuestions"][0]["correctAnswer"] == "B"
+            assert exported_passage["wrongQuestions"][0]["wrongReason"]["note"] == "export note"
 
             status, data = request_json(port, "GET", "/api/sqlite/practice-records/summary")
             assert status == 200 and data["count"] == 2
@@ -113,6 +178,9 @@ def main():
             assert status == 200 and data["value"]["totalPractices"] == 2
             status, data = request_json(port, "GET", "/api/sqlite/meta/user_stats")
             assert status == 200 and data["value"]["totalTimeSpent"] == 240
+
+            status, data = request_json(port, "GET", "/api/sqlite/meta/vocab_state")
+            assert status == 200 and data["value"]["activeListId"] == "default"
 
             wrong_reason_record = make_record(
                 "record_p1-medium-63_1785155471248_tci4wb41s",

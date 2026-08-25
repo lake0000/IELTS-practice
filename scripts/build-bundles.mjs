@@ -103,7 +103,6 @@ const bundles = {
         'js/utils/answerSanitizer.js',
         'js/utils/answerMatchCore.js',
         'assets/wordlists/ielts_core.bundle.js',
-        'assets/wordlists/ecdict_reading.bundle.js',
         'js/core/dictionaryService.js',
         'js/runtime/reviewHighlightDictionary.js',
         'js/utils/practiceTimerPreferences.js',

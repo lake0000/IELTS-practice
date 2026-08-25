@@ -188,15 +188,28 @@
         const source = value && typeof value === 'object'
             ? value
             : { category: value };
-        const category = source.category ?? source.reason ?? source.type;
+        const categories = [];
+        const addCategory = (item) => {
+            const normalized = item == null ? '' : String(item).trim();
+            if (normalized && !categories.includes(normalized)) {
+                categories.push(normalized);
+            }
+        };
+        if (Array.isArray(source.categories)) {
+            source.categories.forEach(addCategory);
+        }
+        addCategory(source.category);
+        addCategory(source.reason);
+        addCategory(source.type);
+        const category = categories[0] || '';
         const note = source.note ?? source.detail ?? source.text;
-        const normalizedCategory = category == null ? '' : String(category).trim();
         const normalizedNote = note == null ? '' : String(note).trim();
-        if (!normalizedCategory && !normalizedNote) {
+        if (!category && !normalizedNote) {
             return null;
         }
         return {
-            category: normalizedCategory,
+            category,
+            categories,
             note: normalizedNote,
             updatedAt: source.updatedAt || new Date().toISOString()
         };
@@ -681,7 +694,7 @@
                 return Math.max(0, Math.min(1, numeric));
             }
         }
-        const correct = Number(record && (record.correctAnswers ?? record.scoreInfo?.correct ?? record.score));
+        const correct = Number(record && (record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.score ?? record.correctAnswers));
         const total = Number(record && (record.totalQuestions ?? record.scoreInfo?.total));
         return Number.isFinite(correct) && Number.isFinite(total) && total > 0
             ? Math.max(0, Math.min(1, correct / total))
@@ -886,6 +899,22 @@
         );
     }
 
+    /**
+     * 按需导出完整错题包：只在用户触发导出时由本地服务合并题库原文、
+     * 题目、作答、标准答案和已标错因，不把这些重字段常驻写入练习记录。
+     */
+    async function exportFullWrongRecords(recordIds = [], options = {}) {
+        const ids = Array.isArray(recordIds)
+            ? recordIds.map((value) => String(value || '').trim()).filter(Boolean)
+            : [];
+        const backend = await getAvailableSqliteBackend(options.status || {});
+        if (!backend || typeof backend.exportFullWrongRecords !== 'function') {
+            throw new Error('完整错题导出需要先启动本地服务');
+        }
+        await seedSqliteBackendFromLocalIfNeeded(backend);
+        return await backend.exportFullWrongRecords(ids);
+    }
+
     /** 返回去重后的 examId 列表，供 overview 统计使用 */
     async function distinctExamIds(options = {}) {
         const summaries = await listSummary(options);
@@ -959,6 +988,25 @@
         const answerComparison = projectComparisonSummary(
             record.answerComparison || (record.realData && record.realData.answerComparison) || record.answerDetails || (scoreInfo && scoreInfo.details)
         );
+        const resolveNumber = (...values) => {
+            for (let index = 0; index < values.length; index += 1) {
+                const numeric = Number(values[index]);
+                if (Number.isFinite(numeric)) {
+                    return numeric;
+                }
+            }
+            return null;
+        };
+        const resolvedScore = resolveNumber(record.score, scoreInfo.score, scoreInfo.correct, record.correctAnswers) || 0;
+        const resolvedTotal = resolveNumber(record.totalQuestions, scoreInfo.total, scoreInfo.totalQuestions) || 0;
+        const rawAccuracy = resolveNumber(record.accuracy, scoreInfo.accuracy);
+        const resolvedAccuracy = rawAccuracy != null && rawAccuracy > 0
+            ? (rawAccuracy > 1 ? rawAccuracy / 100 : rawAccuracy)
+            : (resolvedTotal > 0 && resolvedScore > 0 ? resolvedScore / resolvedTotal : (rawAccuracy || 0));
+        const rawPercentage = resolveNumber(record.percentage, scoreInfo.percentage);
+        const resolvedPercentage = rawPercentage != null && rawPercentage > 0
+            ? rawPercentage
+            : (resolvedAccuracy > 0 ? Math.round(resolvedAccuracy * 100) : (rawPercentage || 0));
         return {
             id: record.id || record.sessionId || '',
             sessionId: record.sessionId || null,
@@ -973,11 +1021,11 @@
             endTime: record.endTime || null,
             date: record.date || null,
             duration: Number(record.duration != null ? record.duration : (scoreInfo.duration != null ? scoreInfo.duration : scoreInfo.timeSpent)) || 0,
-            percentage: Number(record.percentage != null ? record.percentage : scoreInfo.percentage) || 0,
-            accuracy: Number(record.accuracy != null ? record.accuracy : scoreInfo.accuracy) || 0,
-            score: Number(record.score != null ? record.score : scoreInfo.score) || 0,
-            totalQuestions: Number(record.totalQuestions != null ? record.totalQuestions : scoreInfo.total) || 0,
-            correctAnswers: Number(record.correctAnswers != null ? record.correctAnswers : scoreInfo.correct) || 0,
+            percentage: resolvedPercentage,
+            accuracy: resolvedAccuracy,
+            score: resolvedScore,
+            totalQuestions: resolvedTotal,
+            correctAnswers: Number(scoreInfo.correct != null ? scoreInfo.correct : (record.score != null ? record.score : record.correctAnswers)) || 0,
             status: record.status || 'completed',
             suiteMode: Boolean(record.suiteMode),
             suiteEntryCount: rawSuiteEntries.length,
@@ -987,13 +1035,13 @@
             suiteSessionId: record.suiteSessionId || metadata.suiteSessionId || null,
             questionTypePerformance: record.questionTypePerformance || null,
             scoreInfo: {
-                accuracy: scoreInfo.accuracy != null ? scoreInfo.accuracy : null,
+                accuracy: resolvedAccuracy,
                 duration: scoreInfo.duration != null ? scoreInfo.duration : null,
                 timeSpent: scoreInfo.timeSpent != null ? scoreInfo.timeSpent : null,
-                percentage: scoreInfo.percentage != null ? scoreInfo.percentage : null,
-                score: scoreInfo.score != null ? scoreInfo.score : null,
-                total: scoreInfo.total != null ? scoreInfo.total : null,
-                correct: scoreInfo.correct != null ? scoreInfo.correct : null
+                percentage: resolvedPercentage,
+                score: resolvedScore,
+                total: resolvedTotal,
+                correct: Number(scoreInfo.correct ?? scoreInfo.score ?? record.score ?? record.correctAnswers) || 0
             },
             metadata: {
                 category: metadata.category || record.category || null,
@@ -1325,7 +1373,7 @@
 
     function toSummaryMetrics(record = {}) {
         const total = Number(record.totalQuestions ?? record.scoreInfo?.total ?? record.scoreInfo?.totalQuestions ?? record.realData?.scoreInfo?.total ?? record.realData?.totalQuestions);
-        const correct = Number(record.correctAnswers ?? record.score ?? record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.realData?.scoreInfo?.correct ?? record.realData?.score);
+        const correct = Number(record.scoreInfo?.correct ?? record.scoreInfo?.score ?? record.score ?? record.realData?.scoreInfo?.correct ?? record.realData?.score ?? record.correctAnswers);
         const safeTotal = Number.isFinite(total) && total >= 0 ? total : 0;
         const safeCorrect = Number.isFinite(correct) && correct >= 0 ? correct : 0;
 
@@ -1371,6 +1419,7 @@
         clear,
         deleteById,
         deleteMany,
+        exportFullWrongRecords,
         saveRecord,
         normalizeRecord,
         fromCompletion,
